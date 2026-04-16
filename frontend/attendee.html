@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena — My Gate Info</title>
+  <meta name="description" content="Your personal gate information and AI-powered entry guidance from Nexus Arena OS."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    body { background: #040810; }
+    .att-page {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      padding: 20px 16px 40px;
+      max-width: 480px; margin: 0 auto;
+      position: relative; z-index: 1;
+    }
+    .att-header { display:flex; align-items:center; justify-content:space-between; padding: 8px 0 20px; }
+    .att-logo { font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:1rem; color:var(--cyan); }
+  </style>
+</head>
+<body>
+  <div class="att-page">
+    <!-- Header -->
+    <div class="att-header">
+      <div class="att-logo">🏟️ NEXUS ARENA</div>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+
+    <!-- Greeting -->
+    <div style="margin-bottom:20px;">
+      <h1 style="font-size:1.4rem; font-weight:700; margin-bottom:4px;" id="att-name">Welcome</h1>
+      <div style="color:var(--text-secondary); font-size:0.875rem;" id="att-ticket">Ticket: —</div>
+    </div>
+
+    <!-- Gate Hero -->
+    <div class="attendee-hero">
+      <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); margin-bottom:6px;">Your Entry Gate</div>
+      <div class="gate-display" id="gate-display">—</div>
+      <div style="font-size:0.9rem; color:var(--text-secondary);" id="seat-display">Section — · Seat —</div>
+
+      <div style="margin-top:16px;">
+        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">Gate Congestion Level</div>
+        <div class="progress-track" style="margin:4px auto; max-width:280px; height:8px;">
+          <div class="progress-fill fill-green" id="density-bar" style="width:0%;"></div>
+        </div>
+        <div style="margin-top:8px;" id="gate-status-badge"></div>
+      </div>
+
+      <div class="wait-time-display" style="margin-top:14px;" id="wait-display">
+        Current wait: <span id="wait-time-val">—</span>
+      </div>
+    </div>
+
+    <!-- AI Nudge Alert (shown when gate is busy) -->
+    <div id="nudge-box" style="display:none; margin-bottom:20px;">
+      <div class="nudge-card">
+        <div class="nudge-icon">🚨</div>
+        <div class="nudge-title" id="nudge-title">Gate Alert</div>
+        <div class="nudge-msg"  id="nudge-msg">Your gate is at capacity. Please follow AI guidance below.</div>
+        <div id="nudge-alt" style="display:none; margin-top:12px; padding:10px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:8px;">
+          <div style="font-size:0.78rem; color:var(--green);">
+            ✅ Head to: <strong id="nudge-alt-label">—</strong>
+          </div>
+        </div>
+        <div style="font-size:0.7rem; color:var(--text-muted); margin-top:10px;" id="nudge-time">—</div>
+      </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
+      <div class="card" style="display:flex; align-items:center; gap:14px;">
+        <div style="font-size:1.6rem;">📍</div>
+        <div>
+          <div style="font-weight:600; margin-bottom:3px;" id="gate-full-label">Loading gate info…</div>
+          <div style="font-size:0.78rem; color:var(--text-secondary);">Your assigned entry point</div>
+        </div>
+      </div>
+      <div class="card" style="display:flex; align-items:center; gap:14px;">
+        <div style="font-size:1.6rem;">🎫</div>
+        <div>
+          <div style="font-weight:600; margin-bottom:3px;" id="seat-full">Loading seat…</div>
+          <div style="font-size:0.78rem; color:var(--text-secondary);">Your seat assignment</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Guide -->
+    <div class="card">
+      <div class="card-title">Understanding Your Gate Status</div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div style="width:10px;height:10px;border-radius:50%;background:#10B981;flex-shrink:0;"></div>
+          <div style="font-size:0.82rem; color:var(--text-secondary);"><strong style="color:var(--text-primary);">Normal</strong> — Smooth entry. Proceed directly.</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div style="width:10px;height:10px;border-radius:50%;background:#F59E0B;flex-shrink:0;"></div>
+          <div style="font-size:0.82rem; color:var(--text-secondary);"><strong style="color:var(--text-primary);">Busy</strong> — Short wait expected. Join queue calmly.</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div style="width:10px;height:10px;border-radius:50%;background:#EF4444;flex-shrink:0;"></div>
+          <div style="font-size:0.82rem; color:var(--text-secondary);"><strong style="color:var(--text-primary);">Critical</strong> — AI will guide you to next available gate.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin-top:24px; font-size:0.72rem; color:var(--text-muted);">
+      Updates automatically · Powered by AI Brain Agent v3
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast, densityColor, statusClass } from '/static/js/api.js';
+
+    if (!API.token() || API.role() !== 'attendee') window.location.href = '/';
+    window.API = API;
+
+    let currentGate = null;
+
+    async function loadMyInfo() {
+      try {
+        const data = await API.getAttendeMe();
+
+        document.getElementById('att-name').textContent = `Hello, ${data.name} 👋`;
+        document.getElementById('att-ticket').textContent = `Ticket: ${data.ticket_code}`;
+        document.getElementById('gate-display').textContent = data.gate_assigned || '—';
+        document.getElementById('seat-display').textContent = `Section ${data.seat_section} · Seat ${data.seat_number}`;
+        document.getElementById('gate-full-label').textContent = `Gate ${data.gate_assigned}`;
+        document.getElementById('seat-full').textContent = `Section ${data.seat_section}, Seat ${data.seat_number}`;
+        currentGate = data.gate_assigned;
+
+        // Density bar
+        const rhoVal = data.gate_density || 0;
+        const pct = Math.round(rhoVal * 100);
+        const bar = document.getElementById('density-bar');
+        bar.style.width = pct + '%';
+        const col = densityColor(rhoVal);
+        bar.style.background = `linear-gradient(90deg, ${col}, ${col}aa)`;
+
+        // Status badge
+        const status = data.gate_status || 'UNKNOWN';
+        document.getElementById('gate-status-badge').innerHTML =
+          `<span class="status-badge ${statusClass(status)}">${status} — ${pct}% full</span>`;
+
+        // Wait time
+        if (data.wait_time) {
+          document.getElementById('wait-time-val').textContent = `~${data.wait_time.toFixed(0)} min`;
+          document.getElementById('wait-time-val').style.color = 'var(--amber)';
+        } else {
+          document.getElementById('wait-time-val').textContent = 'Minimal';
+          document.getElementById('wait-time-val').style.color = 'var(--green)';
+        }
+
+        // Show nudge if exists
+        if (data.nudge) {
+          showNudge(data.nudge);
+        }
+      } catch(e) {
+        console.error('Could not load attendee info:', e);
+      }
+    }
+
+    function showNudge(nudge) {
+      const box = document.getElementById('nudge-box');
+      box.style.display = 'block';
+      document.getElementById('nudge-title').textContent =
+        nudge.severity === 'CHOKE' ? '🚨 Gate at Capacity' : '⚠️ Gate Getting Busy';
+      document.getElementById('nudge-msg').textContent = nudge.message;
+
+      if (nudge.alt_gate) {
+        const altDiv = document.getElementById('nudge-alt');
+        altDiv.style.display = 'block';
+        document.getElementById('nudge-alt-label').textContent = nudge.alt_gate;
+      }
+
+      document.getElementById('nudge-time').textContent = `AI update: ${new Date(nudge.timestamp).toLocaleTimeString()}`;
+      showToast('Gate Alert', nudge.message.substring(0,80), 'danger', 8000);
+    }
+
+    // WebSocket for real-time nudges
+    API.connectWS();
+    API.onWS((msg) => {
+      // Only process nudges for this ticket
+      if (msg.type === 'attendee_nudge' && msg.ticket_code === API.token()) {
+        showNudge(msg);
+      }
+      // Update density if it's our gate
+      if (msg.type === 'heatmap_update' && currentGate) {
+        const gateMetric = msg.metrics?.[currentGate];
+        if (gateMetric) {
+          const rho = gateMetric.density || 0;
+          const pct = Math.round(rho * 100);
+          const bar = document.getElementById('density-bar');
+          bar.style.width = pct + '%';
+          const col = densityColor(rho);
+          bar.style.background = `linear-gradient(90deg, ${col}, ${col}aa)`;
+          document.getElementById('gate-status-badge').innerHTML =
+            `<span class="status-badge ${statusClass(gateMetric.status)}">${gateMetric.status} — ${pct}% full</span>`;
+        }
+      }
+    });
+
+    loadMyInfo();
+    setInterval(loadMyInfo, 10000);
+  </script>
+</body>
+</html>

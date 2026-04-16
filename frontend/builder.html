@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — Venue Builder</title>
+  <meta name="description" content="Define your stadium topology: add nodes, edges, or upload an image to auto-generate the layout."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    #builder-canvas { width:100%; height:520px; cursor:grab; }
+    #builder-canvas:active { cursor:grabbing; }
+    .builder-layout { display:grid; grid-template-columns:300px 1fr; gap:20px; }
+    @media(max-width:900px) { .builder-layout { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <nav class="nexus-nav">
+    <div class="nav-logo"><span style="font-size:1.4rem;">🏟️</span> NEXUS ARENA OS</div>
+    <div class="nav-links">
+      <a href="/dashboard"  class="nav-link">Dashboard</a>
+      <a href="/builder"    class="nav-link active">Venue Builder</a>
+      <a href="/monitor"    class="nav-link">Live Monitor</a>
+      <a href="/analytics"  class="nav-link">Analytics</a>
+      <a href="/concierge"  class="nav-link">AI Directives</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-badge badge-admin" id="nav-role-badge">—</span>
+      <span style="font-size:0.85rem; color:var(--text-secondary);" id="nav-name">—</span>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <main class="page">
+    <div class="section-header" style="margin-bottom:20px;">
+      <div>
+        <h1 class="section-title">Venue Builder</h1>
+        <div class="section-sub">Define your stadium graph · Upload image for AI parsing · Save to persistent DB</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-ghost" onclick="loadCurrentLayout()">↻ Load Saved</button>
+        <button class="btn btn-primary" onclick="saveLayout()">💾 Save Layout</button>
+      </div>
+    </div>
+
+    <div class="builder-layout">
+      <!-- Side Panel -->
+      <div style="display:flex; flex-direction:column; gap:14px;">
+
+        <!-- Image Upload -->
+        <div class="card">
+          <div class="card-title">📸 Image → JSON Parser</div>
+          <div class="dropzone" id="dropzone" onclick="document.getElementById('img-upload').click()">
+            <div class="dropzone-icon">🗺️</div>
+            <div class="dropzone-text">
+              Drop a stadium map or click to upload<br/>
+              <span style="font-size:0.72rem; color:var(--text-muted);">
+                Color guide: 🔴 Gates · 🔵 Lobbies · 🟡 Concessions · 🟢 Floor
+              </span>
+            </div>
+          </div>
+          <input type="file" id="img-upload" accept="image/*" style="display:none;" onchange="processImage(this)"/>
+          <div id="img-status" style="margin-top:8px; font-size:0.78rem; color:var(--text-secondary);"></div>
+        </div>
+
+        <!-- Add Node -->
+        <div class="card">
+          <div class="card-title">➕ Add Node</div>
+          <div class="form-group">
+            <label class="form-label">ID</label>
+            <input id="n-id" class="form-input" placeholder="e.g. GX" maxlength="6"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Label</label>
+            <input id="n-label" class="form-input" placeholder="e.g. Gate X"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select id="n-type" class="form-select">
+              <option value="gate">Gate</option>
+              <option value="lobby">Lobby</option>
+              <option value="concession">Concession</option>
+              <option value="floor">Floor</option>
+              <option value="restroom">Restroom</option>
+              <option value="medical">Medical</option>
+              <option value="vip">VIP</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Capacity</label>
+            <input id="n-cap" class="form-input" type="number" value="800"/>
+          </div>
+          <button class="btn btn-primary" style="width:100%; justify-content:center;" onclick="addNode()">Add Node</button>
+        </div>
+
+        <!-- Add Edge -->
+        <div class="card">
+          <div class="card-title">🔗 Add Edge</div>
+          <div class="form-group">
+            <label class="form-label">From Node</label>
+            <select id="e-from" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">To Node</label>
+            <select id="e-to" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Max Flow (ppl/min)</label>
+            <input id="e-flow" class="form-input" type="number" value="1000"/>
+          </div>
+          <button class="btn btn-ghost" style="width:100%; justify-content:center;" onclick="addEdge()">Add Edge</button>
+        </div>
+
+        <!-- Node count -->
+        <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div class="stat-label">Nodes</div>
+            <div class="stat-value" id="b-node-count" style="font-size:1.5rem;">0</div>
+          </div>
+          <div>
+            <div class="stat-label">Edges</div>
+            <div class="stat-value" id="b-edge-count" style="font-size:1.5rem;">0</div>
+          </div>
+          <button class="btn btn-danger" style="padding:8px 12px;" onclick="clearAll()">🗑 Clear</button>
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <div>
+        <div class="card" style="padding:0; overflow:hidden;">
+          <canvas id="builder-canvas"></canvas>
+        </div>
+        <!-- JSON Preview -->
+        <div class="card" style="margin-top:14px;">
+          <div class="card-title">JSON Preview</div>
+          <pre id="json-preview" style="font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-secondary); max-height:180px; overflow-y:auto; white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast } from '/static/js/api.js';
+
+    if (!API.token() || API.role() !== 'admin') {
+      showToast('Access Denied', 'Venue Builder requires admin role', 'danger');
+      setTimeout(() => window.location.href = '/dashboard', 2000);
+    }
+
+    document.getElementById('nav-name').textContent = API.name();
+    document.getElementById('nav-role-badge').textContent = 'Admin';
+    window.API = API;
+
+    const sid = API.stadiumId();
+    let nodes = [];
+    let edges = [];
+
+    // ── Canvas 2D Graph Renderer ────────────────────────────────────────────
+    const canvas = document.getElementById('builder-canvas');
+    const ctx = canvas.getContext('2d');
+    let pan = { x: 0, y: 0 };
+    let scale = 0.7;
+    let dragging = null;
+    let mousePos = { x: 0, y: 0 };
+
+    const NODE_COLORS = {
+      gate:'#EF4444', lobby:'#3B82F6', concession:'#F59E0B',
+      floor:'#10B981', restroom:'#8B5CF6', medical:'#EC4899',
+      vip:'#A78BFA', default:'#94A3B8'
+    };
+
+    function resizeCanvas() {
+      canvas.width  = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      drawGraph();
+    }
+    new ResizeObserver(resizeCanvas).observe(canvas);
+
+    function worldToScreen(x, y) {
+      return {
+        x: x * scale + canvas.width  / 2 + pan.x,
+        y: y * scale + canvas.height / 2 + pan.y,
+      };
+    }
+
+    function screenToWorld(sx, sy) {
+      return {
+        x: (sx - canvas.width  / 2 - pan.x) / scale,
+        y: (sy - canvas.height / 2 - pan.y) / scale,
+      };
+    }
+
+    function drawGraph() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = 'rgba(0,212,255,0.04)';
+      ctx.lineWidth = 1;
+      const gs = 60 * scale;
+      for (let x = (pan.x % gs); x < canvas.width; x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+      for (let y = (pan.y % gs); y < canvas.height; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+
+      // Edges
+      edges.forEach(e => {
+        const fn = nodes.find(n => n.id === e.from_id);
+        const tn = nodes.find(n => n.id === e.to_id);
+        if (!fn || !tn) return;
+        const fs = worldToScreen(fn.coord_x, fn.coord_y);
+        const ts = worldToScreen(tn.coord_x, tn.coord_y);
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(0,212,255,0.3)';
+        ctx.lineWidth = 2 * scale;
+        ctx.moveTo(fs.x, fs.y);
+        ctx.lineTo(ts.x, ts.y);
+        ctx.stroke();
+      });
+
+      // Nodes
+      nodes.forEach(n => {
+        const s = worldToScreen(n.coord_x, n.coord_y);
+        const r = Math.max(8, Math.sqrt(n.capacity / 50) * scale);
+        const col = NODE_COLORS[n.type] || NODE_COLORS.default;
+
+        // Glow
+        const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 2);
+        grad.addColorStop(0, col + '55');
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r * 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Node circle
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Label
+        ctx.font = `bold ${Math.max(10, 12 * scale)}px Space Grotesk, sans-serif`;
+        ctx.fillStyle = '#E2E8F0';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(n.label, s.x, s.y + r + 4);
+      });
+    }
+
+    // ── Pan & drag ────────────────────────────────────────────────────────────
+    let isPanning = false, panStart = { x:0, y:0 };
+
+    canvas.addEventListener('mousedown', (e) => {
+      const w = screenToWorld(e.offsetX, e.offsetY);
+      const hit = nodes.find(n => Math.hypot(n.coord_x - w.x, n.coord_y - w.y) < 25 / scale);
+      if (hit) { dragging = hit; canvas.style.cursor = 'grabbing'; }
+      else { isPanning = true; panStart = { x: e.clientX - pan.x, y: e.clientY - pan.y }; }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (dragging) {
+        const w = screenToWorld(e.offsetX, e.offsetY);
+        dragging.coord_x = Math.round(w.x); dragging.coord_y = Math.round(w.y);
+        drawGraph(); updateJSON();
+      } else if (isPanning) {
+        pan.x = e.clientX - panStart.x; pan.y = e.clientY - panStart.y;
+        drawGraph();
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => { dragging = null; isPanning = false; canvas.style.cursor = 'grab'; });
+    canvas.addEventListener('wheel', (e) => {
+      scale = Math.max(0.2, Math.min(3, scale * (e.deltaY > 0 ? 0.9 : 1.1)));
+      drawGraph();
+    });
+
+    // ── Node / Edge operations ────────────────────────────────────────────────
+    window.addNode = () => {
+      const id = document.getElementById('n-id').value.trim().toUpperCase();
+      const label = document.getElementById('n-label').value.trim();
+      const type = document.getElementById('n-type').value;
+      const capacity = parseInt(document.getElementById('n-cap').value) || 800;
+      if (!id || !label) { showToast('Error', 'ID and Label are required', 'danger'); return; }
+      if (nodes.find(n => n.id === id)) { showToast('Error', `Node ${id} already exists`, 'danger'); return; }
+
+      nodes.push({ id, label, type, capacity, coord_x: Math.round((Math.random()-0.5)*400), coord_y: Math.round((Math.random()-0.5)*400), coord_z: 0 });
+      refreshSelects(); drawGraph(); updateJSON();
+      document.getElementById('n-id').value = '';
+      document.getElementById('n-label').value = '';
+      showToast('Node Added', `${label} (${id})`, 'info', 2000);
+    };
+
+    window.addEdge = () => {
+      const from = document.getElementById('e-from').value;
+      const to   = document.getElementById('e-to').value;
+      const flow = parseInt(document.getElementById('e-flow').value) || 1000;
+      if (from === to) { showToast('Error', 'Cannot connect a node to itself', 'danger'); return; }
+      edges.push({ from_id: from, to_id: to, max_flow: flow, distance: 100 });
+      drawGraph(); updateJSON();
+      showToast('Edge Added', `${from} → ${to}`, 'info', 2000);
+    };
+
+    window.clearAll = () => {
+      if (!confirm('Clear all nodes and edges?')) return;
+      nodes = []; edges = [];
+      refreshSelects(); drawGraph(); updateJSON();
+    };
+
+    function refreshSelects() {
+      ['e-from','e-to'].forEach(id => {
+        const sel = document.getElementById(id);
+        sel.innerHTML = nodes.map(n => `<option value="${n.id}">${n.label} (${n.id})</option>`).join('');
+      });
+      document.getElementById('b-node-count').textContent = nodes.length;
+      document.getElementById('b-edge-count').textContent = edges.length;
+    }
+
+    function updateJSON() {
+      document.getElementById('json-preview').textContent = JSON.stringify({ venue_name:'Custom Stadium', nodes, edges }, null, 2);
+      refreshSelects();
+    }
+
+    // ── Image → JSON ──────────────────────────────────────────────────────────
+    window.processImage = async (input) => {
+      const file = input.files[0];
+      if (!file) return;
+      const status = document.getElementById('img-status');
+      status.textContent = '⏳ Analyzing image…';
+      try {
+        const result = await API.uploadStadiumImage(file);
+        if (result.success) {
+          nodes = result.nodes;
+          edges = result.edges;
+          refreshSelects(); drawGraph(); updateJSON();
+          status.textContent = `✅ Detected ${result.node_count} zones → ${result.edge_count} connections. Review and save.`;
+          showToast('Image Parsed', `Found ${result.node_count} nodes`, 'info');
+        } else {
+          status.textContent = '❌ ' + (result.error || 'Analysis failed');
+        }
+      } catch(e) {
+        status.textContent = '❌ Upload failed';
+        showToast('Error', 'Image processing failed', 'danger');
+      }
+    };
+
+    // Drag-and-drop on dropzone
+    const dz = document.getElementById('dropzone');
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault(); dz.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) { const inp = document.getElementById('img-upload'); inp.files = e.dataTransfer.files; processImage(inp); }
+    });
+
+    // ── Save Layout ───────────────────────────────────────────────────────────
+    window.saveLayout = async () => {
+      if (nodes.length === 0) { showToast('Error', 'Add at least one node first', 'danger'); return; }
+      try {
+        const result = await API.postLayout(sid, {
+          venue_name: 'Custom Stadium',
+          nodes: nodes.map(n => ({ id:n.id, label:n.label, type:n.type, capacity:n.capacity, coord_x:n.coord_x, coord_y:n.coord_y, coord_z:0 })),
+          edges: edges.map(e => ({ from_id:e.from_id, to_id:e.to_id, max_flow:e.max_flow, distance:e.distance||100 })),
+        });
+        showToast('Saved!', `${result.node_count} nodes, ${result.edge_count} edges stored to DB`, 'info');
+      } catch(e) {
+        showToast('Error', 'Save failed — admin access required', 'danger');
+      }
+    };
+
+    // ── Load current layout from DB ───────────────────────────────────────────
+    window.loadCurrentLayout = async () => {
+      try {
+        const data = await API.getLayout(sid);
+        nodes = data.nodes.map(n => ({ ...n }));
+        edges = data.edges.map(e => ({ ...e }));
+        refreshSelects(); drawGraph(); updateJSON();
+        showToast('Loaded', `${nodes.length} nodes from DB`, 'info');
+      } catch(e) {
+        showToast('Error', 'Could not load layout', 'danger');
+      }
+    };
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    resizeCanvas();
+    loadCurrentLayout();
+  </script>
+</body>
+</html>

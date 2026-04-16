@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — Login</title>
+  <meta name="description" content="Nexus Arena OS: Secure login for stadium employees and ticket holders."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    /* Extra login-page specifics */
+    .login-version {
+      text-align: center; margin-top: 20px;
+      font-size: 0.73rem; color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+    .demo-box {
+      margin-top: 16px; padding: 12px 14px;
+      background: rgba(136,117,255,0.06);
+      border: 1px solid rgba(136,117,255,0.18);
+      border-radius: 10px;
+    }
+    .demo-box-att {
+      background: rgba(34,211,165,0.05);
+      border: 1px solid rgba(34,211,165,0.18);
+    }
+    .demo-label {
+      font-size: 0.7rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-muted); margin-bottom: 6px;
+    }
+    .demo-creds { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.8; }
+    .login-error {
+      display:none; margin-top:14px; padding:10px 14px;
+      background: rgba(255,77,109,0.08);
+      border: 1px solid rgba(255,77,109,0.28);
+      border-radius: 8px; color: var(--red); font-size: 0.82rem;
+    }
+    .logo-icon {
+      font-size: 2.8rem; margin-bottom: 10px;
+      display: block;
+      animation: icon-bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.05s both;
+    }
+    @keyframes icon-bounce {
+      from { opacity: 0; transform: scale(0.6) rotate(-10deg); }
+      to   { opacity: 1; transform: scale(1) rotate(0deg); }
+    }
+    /* Particle canvas */
+    #particle-canvas {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="particle-canvas"></canvas>
+
+  <div class="login-page">
+    <div class="login-container">
+      <!-- Logo -->
+      <div class="login-logo">
+        <span class="logo-icon">🏟️</span>
+        <div class="login-logo-text">NEXUS ARENA OS</div>
+        <div style="color:var(--text-muted); font-size:0.78rem; margin-top:8px; letter-spacing:0.02em;">
+          Multi-Agent Crowd Intelligence Platform
+        </div>
+      </div>
+
+      <!-- Login Box -->
+      <div class="login-box">
+        <!-- Tabs -->
+        <div class="login-tabs">
+          <button class="login-tab active" id="tab-emp" onclick="switchTab('employee')">
+            👷 Employee
+          </button>
+          <button class="login-tab" id="tab-att" onclick="switchTab('attendee')">
+            🎫 Ticket Holder
+          </button>
+        </div>
+
+        <!-- Employee Panel -->
+        <div class="tab-panel active" id="panel-employee">
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input id="emp-email" class="form-input" type="email"
+                   placeholder="admin@nexus.com" value="admin@nexus.com" autocomplete="email"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input id="emp-password" class="form-input" type="password"
+                   placeholder="••••••••••" value="NexusAdmin123" autocomplete="current-password"/>
+          </div>
+          <button class="btn btn-primary" style="width:100%; justify-content:center; margin-top:4px;"
+                  id="btn-emp-login" onclick="loginEmployee()">
+            Sign In as Employee
+          </button>
+          <div class="demo-box">
+            <div class="demo-label">Demo Credentials</div>
+            <div class="demo-creds">
+              Admin: admin@nexus.com / NexusAdmin123<br/>
+              Staff: staff1@nexus.com / Staff123
+            </div>
+          </div>
+        </div>
+
+        <!-- Attendee Panel -->
+        <div class="tab-panel" id="panel-attendee">
+          <div style="text-align:center; margin-bottom:20px;">
+            <div style="font-size:2rem; margin-bottom:8px;">🎟️</div>
+            <div style="color:var(--text-secondary); font-size:0.875rem; line-height:1.6;">
+              Enter your ticket code to access<br/>real-time gate info &amp; AI guidance
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Ticket Code</label>
+            <input id="att-code" class="form-input" type="text"
+                   placeholder="e.g. TKT-001"
+                   style="text-transform:uppercase; letter-spacing:0.12em; font-size:1.05rem; text-align:center;"/>
+          </div>
+          <button class="btn btn-primary" style="width:100%; justify-content:center; margin-top:4px;"
+                  id="btn-att-login" onclick="loginAttendee()">
+            View My Gate Info
+          </button>
+          <div class="demo-box demo-box-att">
+            <div class="demo-label">Demo Ticket Codes</div>
+            <div class="demo-creds">
+              TKT-001 (Gate North) · TKT-002 (Gate North)<br/>
+              TKT-004 (Gate South) · TKT-006 (Gate East)<br/>
+              TKT-009 (Gate NE) · TKT-010 (Gate NW)
+            </div>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div id="login-error" class="login-error"></div>
+      </div>
+
+      <div class="login-version">Nexus Arena OS v3.0 · AI-Powered Crowd Management</div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast } from '/static/js/api.js';
+
+    // Redirect if already logged in
+    const role = API.role();
+    if (role === 'attendee') window.location.href = '/attendee';
+    else if (role) window.location.href = '/dashboard';
+
+    // ── Particle canvas background ──────────────────────────────────────────
+    (function initParticles() {
+      const canvas = document.getElementById('particle-canvas');
+      const ctx = canvas.getContext('2d');
+      let W, H, particles = [];
+
+      function resize() {
+        W = canvas.width  = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      const COLORS = ['rgba(136,117,255,', 'rgba(240,164,58,', 'rgba(34,211,165,'];
+
+      for (let i = 0; i < 55; i++) {
+        particles.push({
+          x: Math.random() * window.innerWidth,
+          y: Math.random() * window.innerHeight,
+          r: Math.random() * 1.8 + 0.5,
+          vy: -(Math.random() * 0.35 + 0.1),
+          vx: (Math.random() - 0.5) * 0.15,
+          alpha: Math.random() * 0.5 + 0.15,
+          color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        });
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        particles.forEach(p => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = p.color + p.alpha + ')';
+          ctx.fill();
+
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.y < -10) { p.y = H + 10; p.x = Math.random() * W; }
+        });
+        requestAnimationFrame(draw);
+      }
+      draw();
+    })();
+
+    // ── Tab switch with animation ───────────────────────────────────────────
+    window.switchTab = (tab) => {
+      document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.remove('active');
+        p.style.display = 'none';
+      });
+      const panelId = `panel-${tab === 'employee' ? 'employee' : 'attendee'}`;
+      const tabId   = `tab-${tab === 'employee' ? 'emp' : 'att'}`;
+      document.getElementById(tabId).classList.add('active');
+      const panel = document.getElementById(panelId);
+      panel.style.display = 'block';
+      // Force reflow for animation
+      void panel.offsetWidth;
+      panel.classList.add('active');
+      document.getElementById('login-error').style.display = 'none';
+    };
+
+    window.loginEmployee = async () => {
+      const email    = document.getElementById('emp-email').value.trim();
+      const password = document.getElementById('emp-password').value;
+      const btn      = document.getElementById('btn-emp-login');
+      btn.textContent = 'Signing in…'; btn.disabled = true;
+
+      try {
+        const data = await API.loginEmployee(email, password);
+        showToast('Welcome back!', `Logged in as ${data.role}`, 'info');
+        window.location.href = '/dashboard';
+      } catch(e) {
+        showError('Invalid email or password. Check demo credentials below.');
+      } finally {
+        btn.textContent = 'Sign In as Employee'; btn.disabled = false;
+      }
+    };
+
+    window.loginAttendee = async () => {
+      const code = document.getElementById('att-code').value.trim().toUpperCase();
+      const btn  = document.getElementById('btn-att-login');
+      btn.textContent = 'Checking ticket…'; btn.disabled = true;
+
+      try {
+        const data = await API.loginAttendee(code);
+        showToast('Ticket verified!', `Welcome, ${data.name}`, 'info');
+        window.location.href = '/attendee';
+      } catch(e) {
+        showError('Ticket code not found. Try TKT-001 through TKT-010.');
+      } finally {
+        btn.textContent = 'View My Gate Info'; btn.disabled = false;
+      }
+    };
+
+    function showError(msg) {
+      const el = document.getElementById('login-error');
+      el.textContent = msg; el.style.display = 'block';
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const active = document.querySelector('.tab-panel.active')?.id;
+      if (active === 'panel-employee') window.loginEmployee();
+      else window.loginAttendee();
+    });
+  </script>
+</body>
+</html>

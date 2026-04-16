@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — Flow Analytics</title>
+  <meta name="description" content="Historical crowd flow analytics: flux time-series, peak density comparison, and gate performance charts."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <nav class="nexus-nav">
+    <div class="nav-logo"><span style="font-size:1.4rem;">🏟️</span> NEXUS ARENA OS</div>
+    <div class="nav-links">
+      <a href="/dashboard"  class="nav-link">Dashboard</a>
+      <a href="/builder"    class="nav-link" id="nav-builder">Venue Builder</a>
+      <a href="/monitor"    class="nav-link">Live Monitor</a>
+      <a href="/analytics"  class="nav-link active">Analytics</a>
+      <a href="/concierge"  class="nav-link">AI Directives</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-badge badge-admin" id="nav-role-badge">—</span>
+      <span style="font-size:0.85rem; color:var(--text-secondary);" id="nav-name">—</span>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <main class="page">
+    <div class="section-header" style="margin-bottom:24px;">
+      <div>
+        <h1 class="section-title">Flow Analytics</h1>
+        <div class="section-sub">Historical crowd flux · M/M/1 wait analysis · Gate performance</div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <select id="sel-node" class="form-select" style="width:200px;" onchange="loadHistory()">
+          <option value="">All Gates</option>
+        </select>
+        <select id="sel-limit" class="form-select" style="width:140px;" onchange="loadHistory()">
+          <option value="200">Last 200</option>
+          <option value="100">Last 100</option>
+          <option value="50">Last 50</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Summary KPIs -->
+    <div class="stats-grid" style="margin-bottom:24px;">
+      <div class="stat-card">
+        <div class="stat-label">Peak Flux J</div>
+        <div class="stat-value" id="k-peak-flux" style="color:var(--red);">—</div>
+        <div class="stat-sub">Highest recorded</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Occupancy</div>
+        <div class="stat-value" id="k-avg-occ">—</div>
+        <div class="stat-sub">Across all logs</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CRITICAL Events</div>
+        <div class="stat-value" id="k-critical" style="color:var(--amber);">—</div>
+        <div class="stat-sub">Status = CRITICAL/CHOKE</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Data Points</div>
+        <div class="stat-value" id="k-total">—</div>
+        <div class="stat-sub">Time-series records</div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="gap:20px; margin-bottom:20px;">
+      <!-- Flux Time Series -->
+      <div class="card">
+        <div class="card-title">Flux J Over Time (All Nodes)</div>
+        <canvas id="chart-flux" height="240"></canvas>
+      </div>
+
+      <!-- Occupancy by Gate -->
+      <div class="card">
+        <div class="card-title">Peak Occupancy by Gate</div>
+        <canvas id="chart-gates" height="240"></canvas>
+      </div>
+    </div>
+
+    <!-- Status Distribution -->
+    <div class="grid-2" style="gap:20px;">
+      <div class="card">
+        <div class="card-title">Status Distribution</div>
+        <canvas id="chart-status" height="200"></canvas>
+      </div>
+
+      <!-- Raw Table -->
+      <div class="card" style="overflow:hidden;">
+        <div class="card-title">Recent Records</div>
+        <div style="overflow-x:auto; max-height:280px; overflow-y:auto;">
+          <table class="nexus-table" id="history-table">
+            <thead>
+              <tr><th>Time</th><th>Node</th><th>Occupancy</th><th>Flux J</th><th>Status</th></tr>
+            </thead>
+            <tbody id="history-tbody">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast, fmtTime, statusClass } from '/static/js/api.js';
+
+    if (!API.token() || API.role() === 'attendee') window.location.href = '/';
+    document.getElementById('nav-name').textContent = API.name();
+    const role = API.role();
+    document.getElementById('nav-role-badge').textContent = role.charAt(0).toUpperCase() + role.slice(1);
+    document.getElementById('nav-role-badge').className = `nav-badge badge-${role}`;
+    if (role !== 'admin') document.getElementById('nav-builder').style.display = 'none';
+    window.API = API;
+
+    const sid = API.stadiumId();
+    let fluxChart, gateChart, statusChart;
+
+    Chart.defaults.color = '#94A3B8';
+    Chart.defaults.borderColor = 'rgba(0,212,255,0.08)';
+
+    const chartOpts = {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#94A3B8', boxWidth: 10 } } },
+      scales: {
+        x: { grid: { color: 'rgba(0,212,255,0.06)' }, ticks: { color: '#475569', maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(0,212,255,0.06)' }, ticks: { color: '#475569' } },
+      },
+    };
+
+    // Load node list
+    async function loadNodes() {
+      try {
+        const data = await API.getLayout(sid);
+        const sel = document.getElementById('sel-node');
+        const gates = (data.nodes || []).filter(n => n.type === 'gate');
+        gates.forEach(n => sel.insertAdjacentHTML('beforeend', `<option value="${n.id}">${n.label}</option>`));
+      } catch(e) {}
+    }
+
+    window.loadHistory = async function() {
+      const nodeFilter = document.getElementById('sel-node').value;
+      const limit = parseInt(document.getElementById('sel-limit').value);
+      try {
+        const res = await API.getFlowHistory(sid, nodeFilter || undefined, limit);
+        const records = res.data || [];
+
+        // KPIs
+        document.getElementById('k-total').textContent = records.length;
+        const fluxes = records.map(r => r.flux_value || 0);
+        document.getElementById('k-peak-flux').textContent = Math.max(0, ...fluxes).toFixed(4);
+        const occs = records.map(r => r.current_occupancy || 0);
+        document.getElementById('k-avg-occ').textContent = occs.length ? Math.round(occs.reduce((a,b)=>a+b,0)/occs.length) : 0;
+        document.getElementById('k-critical').textContent = records.filter(r => ['CRITICAL','CHOKE'].includes(r.status)).length;
+
+        // Flux time series (sample every N points)
+        const sampled = records.slice().reverse().filter((_,i) => i % Math.max(1, Math.floor(records.length/40)) === 0);
+        const labels = sampled.map(r => fmtTime(r.timestamp));
+
+        if (fluxChart) fluxChart.destroy();
+        fluxChart = new Chart(document.getElementById('chart-flux'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Flux J',
+              data: sampled.map(r => r.flux_value||0),
+              borderColor: '#00D4FF',
+              backgroundColor: 'rgba(0,212,255,0.08)',
+              fill: true,
+              tension: 0.4,
+              pointRadius: 2,
+            }],
+          },
+          options: chartOpts,
+        });
+
+        // Gate peak occupancy
+        const gateMap = {};
+        records.forEach(r => {
+          if (!gateMap[r.node_id] || r.current_occupancy > gateMap[r.node_id]) {
+            gateMap[r.node_id] = r.current_occupancy || 0;
+          }
+        });
+        const gateLabels = Object.keys(gateMap);
+        const gatePeaks  = Object.values(gateMap);
+        const gateColors = gatePeaks.map(v => v > 700 ? '#EF4444' : v > 400 ? '#F59E0B' : '#10B981');
+
+        if (gateChart) gateChart.destroy();
+        gateChart = new Chart(document.getElementById('chart-gates'), {
+          type: 'bar',
+          data: {
+            labels: gateLabels,
+            datasets: [{ label: 'Peak Occupancy', data: gatePeaks, backgroundColor: gateColors }],
+          },
+          options: { ...chartOpts, plugins: { legend: { display: false } } },
+        });
+
+        // Status distribution
+        const statusMap = { EMPTY:0, GREEN:0, AMBER:0, CRITICAL:0, CHOKE:0 };
+        records.forEach(r => { if (r.status in statusMap) statusMap[r.status]++; });
+
+        if (statusChart) statusChart.destroy();
+        statusChart = new Chart(document.getElementById('chart-status'), {
+          type: 'doughnut',
+          data: {
+            labels: Object.keys(statusMap),
+            datasets: [{
+              data: Object.values(statusMap),
+              backgroundColor: ['#1E293B','#10B981','#F59E0B','#EF4444','#7F1D1D'],
+              borderColor: 'rgba(0,212,255,0.15)',
+              borderWidth: 1,
+            }],
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { labels: { color:'#94A3B8', boxWidth:12 } } },
+          },
+        });
+
+        // Table
+        const tbody = document.getElementById('history-tbody');
+        tbody.innerHTML = '';
+        records.slice(0,50).forEach(r => {
+          tbody.insertAdjacentHTML('beforeend', `
+            <tr>
+              <td style="white-space:nowrap;">${fmtTime(r.timestamp)}</td>
+              <td style="font-weight:600; color:var(--text-primary);">${r.node_id}</td>
+              <td>${r.current_occupancy}</td>
+              <td style="font-family:'JetBrains Mono',monospace; font-size:0.8rem;">${(r.flux_value||0).toFixed(4)}</td>
+              <td><span class="status-badge ${statusClass(r.status)}">${r.status}</span></td>
+            </tr>`);
+        });
+        if (records.length === 0) tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No data yet. Run simulation first.</td></tr>';
+      } catch(e) {
+        showToast('Error', 'Could not load flow history', 'danger');
+      }
+    };
+
+    loadNodes();
+    loadHistory();
+    setInterval(loadHistory, 20000);
+  </script>
+</body>
+</html>

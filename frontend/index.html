@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — Employee Dashboard</title>
+  <meta name="description" content="Nexus Arena OS admin dashboard: real-time agent status, crowd metrics, and AI directives."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    .threshold-row {
+      display: grid; grid-template-columns: 110px 1fr 48px; align-items: center; gap: 10px;
+      margin-bottom: 14px;
+    }
+    .thr-label { font-size: 0.78rem; color: var(--text-secondary); font-weight: 500; }
+    .thr-val   {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem; font-weight: 600;
+      color: var(--accent); text-align: right;
+    }
+    .threshold-save-row {
+      display: flex; align-items: center; gap: 10px; margin-top: 6px;
+    }
+    .thr-status { font-size: 0.76rem; color: var(--green); flex: 1; }
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="nexus-nav">
+    <div class="nav-logo">
+      <span style="font-size:1.4rem;">🏟️</span>
+      NEXUS ARENA OS
+    </div>
+    <div class="nav-links">
+      <a href="/dashboard" class="nav-link active">Dashboard</a>
+      <a href="/builder"   class="nav-link" id="nav-builder">Venue Builder</a>
+      <a href="/monitor"   class="nav-link">Live Monitor</a>
+      <a href="/analytics" class="nav-link">Analytics</a>
+      <a href="/concierge" class="nav-link">AI Directives</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-badge badge-admin" id="nav-role-badge">Admin</span>
+      <span style="font-size:0.85rem; color:var(--text-secondary);" id="nav-name">Loading…</span>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <main class="page">
+    <!-- Header -->
+    <div class="section-header" style="margin-bottom:28px;">
+      <div>
+        <h1 class="section-title">Nexus Grand Stadium</h1>
+        <div class="section-sub" id="stadium-sub">Initializing agent mesh…</div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <div style="font-size:0.77rem; color:var(--text-muted);" id="last-update">—</div>
+        <button class="btn btn-danger" id="btn-surge" onclick="openSurgeModal()">
+          ⚡ Inject Surge
+        </button>
+      </div>
+    </div>
+
+    <!-- KPI Stats -->
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Nodes</div>
+        <div class="stat-value" id="stat-nodes">—</div>
+        <div class="stat-sub">Gates + Lobbies + Services</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Critical Zones</div>
+        <div class="stat-value" id="stat-critical" style="color:var(--red);">—</div>
+        <div class="stat-sub" id="stat-critical-sub">ρ &gt; 75% threshold</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Tickets</div>
+        <div class="stat-value" id="stat-tickets">—</div>
+        <div class="stat-sub">Pending entry</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">AI Directives</div>
+        <div class="stat-value" id="stat-directives" style="color:var(--amber);">—</div>
+        <div class="stat-sub">Issued this session</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Density</div>
+        <div class="stat-value" id="stat-density">—</div>
+        <div class="stat-sub">Across all gate nodes</div>
+      </div>
+    </div>
+
+    <!-- Agent Status Row -->
+    <div class="agents-row">
+      <div class="agent-card">
+        <div class="agent-icon violet">🗺️</div>
+        <div class="agent-info">
+          <div class="agent-name">Spatial Architect</div>
+          <div class="agent-role">Graph Builder · Dijkstra Pathfinder</div>
+        </div>
+        <div class="agent-status-dot" id="dot-spatial"></div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon amber">⚛️</div>
+        <div class="agent-info">
+          <div class="agent-name">Flow Physicist</div>
+          <div class="agent-role">J=ρv Flux · M/M/1 Queue Analysis</div>
+        </div>
+        <div class="agent-status-dot" id="dot-physicist"></div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon rose">🧠</div>
+        <div class="agent-info">
+          <div class="agent-name">AI Brain</div>
+          <div class="agent-role">Choke Detection · Diversion Logic</div>
+        </div>
+        <div class="agent-status-dot" id="dot-brain"></div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-icon teal">💬</div>
+        <div class="agent-info">
+          <div class="agent-name">UX Concierge</div>
+          <div class="agent-role">Nudge Generator · Attendee Alerts</div>
+        </div>
+        <div class="agent-status-dot" id="dot-concierge"></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="gap:20px;">
+      <!-- Gate Status Table -->
+      <div class="card">
+        <div class="card-title">Live Gate Status</div>
+        <div style="overflow-x:auto;">
+          <table class="nexus-table" id="gate-table">
+            <thead>
+              <tr>
+                <th>Gate</th>
+                <th>Status</th>
+                <th>Occupancy</th>
+                <th>Density ρ</th>
+                <th>Flux J</th>
+              </tr>
+            </thead>
+            <tbody id="gate-tbody">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Live Agent Event Feed -->
+      <div class="card">
+        <div class="card-title">Agent Activity Feed</div>
+        <div class="log-feed" id="log-feed">
+          <div class="log-entry">
+            <span class="log-ts">—</span>
+            <span class="log-agent-spatial">[SPATIAL]</span>
+            <span class="log-msg">Awaiting connection to agent mesh…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent AI Directives -->
+    <div class="card" style="margin-top:20px;">
+      <div class="section-header" style="margin-bottom:14px;">
+        <div class="card-title" style="margin:0;">Recent AI Directives</div>
+        <a href="/concierge" class="btn btn-ghost" style="font-size:0.8rem; padding:6px 12px;">View All →</a>
+      </div>
+      <div id="directives-list" style="display:flex; flex-direction:column; gap:10px;">
+        <div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:20px;">
+          No directives yet. Run simulation or inject a surge.
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Threshold Settings (admin only) -->
+    <div class="card" id="threshold-card" style="margin-top:20px; display:none;">
+      <div class="section-header" style="margin-bottom:16px;">
+        <div>
+          <div class="card-title" style="margin:0;">Density Threshold Settings</div>
+          <div style="font-size:0.77rem; color:var(--text-secondary); margin-top:4px;">
+            Adjust alert levels based on your venue's seating capacity
+          </div>
+        </div>
+        <span style="font-size:0.72rem; color:var(--text-muted); background:var(--accent-dim); padding:3px 10px; border-radius:999px; border:1px solid rgba(136,117,255,0.25);">
+          Admin Only
+        </span>
+      </div>
+
+      <!-- Colour-band preview -->
+      <div class="threshold-preview" id="thr-preview" style="margin-bottom:20px;">
+        <div class="tp-empty"    id="tp-empty"    style="flex:15;"></div>
+        <div class="tp-green"    id="tp-green"    style="flex:25;"></div>
+        <div class="tp-amber"    id="tp-amber"    style="flex:15;"></div>
+        <div class="tp-critical" id="tp-critical" style="flex:25;"></div>
+      </div>
+
+      <div class="threshold-row">
+        <span class="thr-label">🟢 Empty cap</span>
+        <input type="range" class="threshold-slider" id="thr-empty" min="5" max="30" step="1" value="15" oninput="onSlide('empty',this.value)"/>
+        <span class="thr-val" id="thr-empty-val">15%</span>
+      </div>
+      <div class="threshold-row">
+        <span class="thr-label">🟢 Normal cap</span>
+        <input type="range" class="threshold-slider" id="thr-green" min="20" max="60" step="1" value="40" oninput="onSlide('green',this.value)"/>
+        <span class="thr-val" id="thr-green-val">40%</span>
+      </div>
+      <div class="threshold-row">
+        <span class="thr-label">🟠 Busy cap</span>
+        <input type="range" class="threshold-slider" id="thr-busy" min="40" max="80" step="1" value="55" oninput="onSlide('busy',this.value)"/>
+        <span class="thr-val" id="thr-busy-val">55%</span>
+      </div>
+      <div class="threshold-row">
+        <span class="thr-label">🔴 Critical cap</span>
+        <input type="range" class="threshold-slider" id="thr-critical" min="55" max="95" step="1" value="75" oninput="onSlide('critical',this.value)"/>
+        <span class="thr-val" id="thr-critical-val">75%</span>
+      </div>
+
+      <div class="threshold-save-row">
+        <span class="thr-status" id="thr-status"></span>
+        <button class="btn btn-primary" onclick="saveThresholds()" style="padding:8px 18px; font-size:0.82rem;">
+          💾 Save Thresholds
+        </button>
+        <button class="btn btn-ghost" onclick="resetThresholds()" style="padding:8px 14px; font-size:0.82rem;">
+          Reset
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Surge Modal -->
+  <div id="surge-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:5000; align-items:center; justify-content:center;">
+    <div class="card" style="width:380px; max-width:95vw; border-color:rgba(255,77,109,0.3);">
+      <div style="font-family:'Space Grotesk',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:18px;">
+        ⚡ Inject Manual Surge
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target Gate</label>
+        <select id="surge-node" class="form-select">
+          <option value="GN">Gate North</option>
+          <option value="GS">Gate South</option>
+          <option value="GE">Gate East</option>
+          <option value="GW">Gate West</option>
+          <option value="GNE">Gate North-East</option>
+          <option value="GNW">Gate North-West</option>
+          <option value="GSE">Gate South-East</option>
+          <option value="GSW">Gate South-West</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Surge Magnitude (people/min)</label>
+        <input id="surge-mag" class="form-input" type="number" value="800" min="100" max="2000"/>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-danger" style="flex:1;" onclick="submitSurge()">🚨 Inject Surge</button>
+        <button class="btn btn-ghost" onclick="closeSurgeModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast, fmtTime, statusClass, densityColor } from '/static/js/api.js';
+
+    if (!API.token() || API.role() === 'attendee') window.location.href = '/';
+
+    document.getElementById('nav-name').textContent = API.name();
+    const role = API.role();
+    const badge = document.getElementById('nav-role-badge');
+    badge.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+    badge.className = `nav-badge badge-${role}`;
+
+    if (role !== 'admin') document.getElementById('nav-builder').style.display = 'none';
+
+    const sid = API.stadiumId();
+    let directiveCount = 0;
+    let metricsCache = {};
+    let liveThresholds = { busy_threshold: 0.55, critical_threshold: 0.75 };
+
+    // Show threshold card for admin
+    if (role === 'admin') {
+      document.getElementById('threshold-card').style.display = 'block';
+      loadThresholds();
+    }
+
+    // ── Threshold UI ──────────────────────────────────────────────────────────
+    async function loadThresholds() {
+      try {
+        const t = await API.getThresholds(sid);
+        liveThresholds = t;
+        const e = Math.round(t.empty_threshold    * 100);
+        const g = Math.round(t.green_threshold    * 100);
+        const b = Math.round(t.busy_threshold     * 100);
+        const c = Math.round(t.critical_threshold * 100);
+        document.getElementById('thr-empty').value    = e;
+        document.getElementById('thr-green').value    = g;
+        document.getElementById('thr-busy').value     = b;
+        document.getElementById('thr-critical').value = c;
+        document.getElementById('thr-empty-val').textContent    = e + '%';
+        document.getElementById('thr-green-val').textContent    = g + '%';
+        document.getElementById('thr-busy-val').textContent     = b + '%';
+        document.getElementById('thr-critical-val').textContent = c + '%';
+        updatePreview(e, g, b, c);
+        updateCriticalLabel(c);
+      } catch(e) { console.warn('Could not load thresholds', e); }
+    }
+
+    function updatePreview(e, g, b, c) {
+      document.getElementById('tp-empty').style.flex    = e;
+      document.getElementById('tp-green').style.flex    = (g - e);
+      document.getElementById('tp-amber').style.flex    = (b - g);
+      document.getElementById('tp-critical').style.flex = (c - b);
+    }
+
+    function updateCriticalLabel(val) {
+      document.getElementById('stat-critical-sub').textContent = `ρ > ${val}% threshold`;
+    }
+
+    window.onSlide = (key, rawVal) => {
+      const val = parseInt(rawVal);
+      document.getElementById(`thr-${key}-val`).textContent = val + '%';
+      const e = parseInt(document.getElementById('thr-empty').value);
+      const g = parseInt(document.getElementById('thr-green').value);
+      const b = parseInt(document.getElementById('thr-busy').value);
+      const c = parseInt(document.getElementById('thr-critical').value);
+      updatePreview(e, g, b, c);
+      updateCriticalLabel(c);
+      document.getElementById('thr-status').textContent = '';
+    };
+
+    window.saveThresholds = async () => {
+      const e = parseInt(document.getElementById('thr-empty').value)    / 100;
+      const g = parseInt(document.getElementById('thr-green').value)    / 100;
+      const b = parseInt(document.getElementById('thr-busy').value)     / 100;
+      const c = parseInt(document.getElementById('thr-critical').value) / 100;
+      if (!(e < g && g < b && b < c)) {
+        showToast('Invalid', 'Thresholds must be in ascending order', 'danger');
+        return;
+      }
+      try {
+        await API.patchThresholds(sid, {
+          empty_threshold: e, green_threshold: g,
+          busy_threshold: b, critical_threshold: c,
+        });
+        liveThresholds = { empty_threshold: e, green_threshold: g, busy_threshold: b, critical_threshold: c };
+        document.getElementById('thr-status').textContent = '✓ Saved — agents will adapt within 15 seconds';
+        showToast('Thresholds Updated', `Critical set to ${Math.round(c*100)}%`, 'info');
+      } catch(err) {
+        showToast('Error', err?.detail || 'Could not save thresholds', 'danger');
+      }
+    };
+
+    window.resetThresholds = () => {
+      document.getElementById('thr-empty').value    = 15;
+      document.getElementById('thr-green').value    = 40;
+      document.getElementById('thr-busy').value     = 55;
+      document.getElementById('thr-critical').value = 75;
+      ['empty','green','busy','critical'].forEach(k => {
+        const def = {empty:15,green:40,busy:55,critical:75}[k];
+        document.getElementById(`thr-${k}-val`).textContent = def + '%';
+      });
+      updatePreview(15, 40, 55, 75);
+      updateCriticalLabel(75);
+      document.getElementById('thr-status').textContent = '';
+    };
+
+    // ── Fetch agent status ──────────────────────────────────────────────────
+    async function updateAgentStatus() {
+      try {
+        const data = await API.getAgentStatus();
+        const map = {
+          'dot-spatial':   data.spatial_architect?.state,
+          'dot-physicist': data.flow_physicist?.state,
+          'dot-brain':     data.ai_brain?.state,
+          'dot-concierge': data.ux_concierge?.state,
+        };
+        Object.entries(map).forEach(([id, state]) => {
+          const dot = document.getElementById(id);
+          if (!dot) return;
+          const on = state === 'ACTIVE';
+          dot.style.background = on ? 'var(--green)' : 'var(--amber)';
+          dot.style.boxShadow  = on ? '0 0 6px var(--green)' : '0 0 6px var(--amber)';
+        });
+        directiveCount = data.ai_brain?.directives_issued || 0;
+        document.getElementById('stat-directives').textContent = directiveCount;
+      } catch(e) {}
+    }
+
+    // ── Fetch metrics ───────────────────────────────────────────────────────
+    async function updateMetrics() {
+      try {
+        const [layoutData, metricsData, ticketData] = await Promise.all([
+          API.getLayout(sid),
+          API.getMetrics(sid),
+          API.getTickets(sid),
+        ]);
+
+        metricsCache = metricsData.metrics || {};
+        const nodes   = layoutData.nodes || [];
+        const tickets = ticketData.tickets || [];
+
+        document.getElementById('stat-nodes').textContent = nodes.length;
+        document.getElementById('stat-tickets').textContent = tickets.filter(t => t.entry_status === 'pending').length;
+
+        const gateNodes = nodes.filter(n => n.type === 'gate');
+        let criticalCount = 0;
+        let totalDensity = 0, densityCount = 0;
+
+        const tbody = document.getElementById('gate-tbody');
+        tbody.innerHTML = '';
+        gateNodes.forEach(node => {
+          const m = metricsCache[node.id] || {};
+          const density = m.density || 0;
+          const status  = m.status  || 'EMPTY';
+          if (['CRITICAL','CHOKE'].includes(status)) criticalCount++;
+          if (density > 0) { totalDensity += density; densityCount++; }
+
+          const pct = Math.round(density * 100);
+          const fillClass = density < (liveThresholds.busy_threshold || 0.55) ? 'fill-green'
+                          : density < (liveThresholds.critical_threshold || 0.75) ? 'fill-amber'
+                          : 'fill-red';
+
+          tbody.insertAdjacentHTML('beforeend', `
+            <tr>
+              <td style="font-weight:600; color:var(--text-primary);">${node.label}</td>
+              <td><span class="status-badge ${statusClass(status)}">${status}</span></td>
+              <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div class="progress-track" style="width:80px;">
+                    <div class="progress-fill ${fillClass}" style="width:${pct}%;"></div>
+                  </div>
+                  <span style="font-size:0.77rem; color:var(--text-secondary);">${m.current_occupancy||0}/${node.capacity}</span>
+                </div>
+              </td>
+              <td style="font-family:'JetBrains Mono',monospace; font-size:0.8rem;">${pct}%</td>
+              <td style="font-family:'JetBrains Mono',monospace; font-size:0.8rem;">${(m.flux||0).toFixed(3)}</td>
+            </tr>
+          `);
+        });
+
+        document.getElementById('stat-critical').textContent = criticalCount;
+        document.getElementById('stat-density').textContent =
+          densityCount > 0 ? (totalDensity / densityCount * 100).toFixed(1) + '%' : '—';
+
+        document.getElementById('stadium-sub').textContent =
+          `Nexus Grand Stadium · ${gateNodes.length} gates · Last updated ${new Date().toLocaleTimeString()}`;
+        document.getElementById('last-update').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      } catch(e) { console.error('Metrics update error:', e); }
+    }
+
+    // ── Live Directives ─────────────────────────────────────────────────────
+    async function loadDirectives() {
+      try {
+        const data = await API.getDirectives(sid, 5);
+        const list = document.getElementById('directives-list');
+        if (!data.directives?.length) return;
+        list.innerHTML = '';
+        data.directives.forEach(d => {
+          list.insertAdjacentHTML('beforeend', `
+            <div class="directive-card severity-${d.severity}">
+              <div class="directive-header">
+                <span class="status-badge ${d.severity === 'CHOKE' ? 'status-choke' : 'status-red'}">${d.severity}</span>
+                <span class="directive-time">${fmtTime(d.timestamp)}</span>
+              </div>
+              <div class="directive-msg">${d.message}</div>
+              ${d.alt_gate  ? `<div class="directive-meta">→ Alternative: ${d.alt_gate}</div>` : ''}
+              ${d.wait_time ? `<div class="directive-meta">⏱ Wait time: ${d.wait_time.toFixed(1)} min</div>` : ''}
+            </div>
+          `);
+        });
+      } catch(e) {}
+    }
+
+    // ── WebSocket real-time events ──────────────────────────────────────────
+    API.connectWS();
+    API.onWS((msg) => {
+      if (msg.type === 'agent_event') addLog(msg);
+      if (msg.type === 'heatmap_update') {
+        if (msg.thresholds) liveThresholds = msg.thresholds;
+        updateMetrics();
+      }
+      if (msg.type === 'ai_directive' && msg.target === 'employee') {
+        addLog({ agent: 'AI', message: msg.message, severity: msg.severity });
+        loadDirectives();
+        if (msg.severity === 'CHOKE') showToast('🚨 CHOKE POINT', msg.message, 'danger', 8000);
+        else showToast('⚠️ Critical Alert', msg.message, 'warn', 6000);
+      }
+    });
+
+    function addLog(msg) {
+      const feed = document.getElementById('log-feed');
+      const agentClass = {
+        'SPATIAL':    'log-agent-spatial',
+        'PHYSICIST':  'log-agent-physicist',
+        'AI':         'log-agent-ai',
+        'CONCIERGE':  'log-agent-concierge',
+      }[msg.agent] || 'log-msg';
+      const sevClass = msg.severity === 'CHOKE' || msg.severity === 'CRITICAL' ? 'log-critical'
+                     : msg.severity === 'WARN' ? 'log-warn' : 'log-msg';
+
+      feed.insertAdjacentHTML('beforeend', `
+        <div class="log-entry">
+          <span class="log-ts">${new Date().toLocaleTimeString()}</span>
+          <span class="${agentClass}">[${msg.agent || 'SYS'}]</span>
+          <span class="${sevClass}">${msg.message}</span>
+        </div>
+      `);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    // ── Surge Modal ─────────────────────────────────────────────────────────
+    window.openSurgeModal = () => {
+      const m = document.getElementById('surge-modal');
+      m.style.display = 'flex';
+    };
+    window.closeSurgeModal = () => {
+      document.getElementById('surge-modal').style.display = 'none';
+    };
+    window.submitSurge = async () => {
+      const node = document.getElementById('surge-node').value;
+      const mag  = parseInt(document.getElementById('surge-mag').value);
+      try {
+        await API.postSurge(sid, node, mag);
+        showToast('Surge Injected', `+${mag} people/min at ${node}`, 'warn');
+        closeSurgeModal();
+      } catch(e) {
+        showToast('Error', 'Could not inject surge', 'danger');
+      }
+    };
+    window.API = API;
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    updateAgentStatus();
+    updateMetrics();
+    loadDirectives();
+    setInterval(updateMetrics, 4000);
+    setInterval(updateAgentStatus, 8000);
+    setInterval(loadDirectives, 10000);
+  </script>
+</body>
+</html>

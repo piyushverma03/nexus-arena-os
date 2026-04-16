@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — Live Monitor</title>
+  <meta name="description" content="Real-time crowd heatmap — 3D orbit view and 2D stadium floor plan with gate analytics."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    /* ── Monitor layout ─────────────────────────────────────────────── */
+    .monitor-wrap {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 18px;
+      align-items: start;
+    }
+    @media(max-width:1100px){ .monitor-wrap { grid-template-columns: 1fr; } }
+
+    /* 3D canvas */
+    #monitor-canvas { width:100%; height:560px; border-radius:var(--radius-md); display:block; }
+
+    /* 2D SVG map */
+    #map-2d-wrap {
+      width:100%; height:560px;
+      border-radius:var(--radius-md);
+      background: rgba(10,10,16,0.95);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: none; /* hidden by default */
+      position: relative;
+    }
+    #stadium-svg { width:100%; height:100%; display:block; }
+
+    /* Gate node on SVG */
+    .svg-gate {
+      cursor: pointer;
+      transition: filter 0.25s;
+    }
+    .svg-gate:hover { filter: brightness(1.35); }
+    .svg-gate circle { transition: fill 0.7s ease, r 0.3s ease; }
+    .svg-gate.selected circle { filter: drop-shadow(0 0 8px currentColor); }
+
+    /* Ticker sidebar */
+    .monitor-sidebar { display:flex; flex-direction:column; gap:14px; }
+    .density-ticker-item {
+      display:flex; align-items:center; gap:8px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+      transition: var(--transition);
+    }
+    .density-ticker-item:hover { background: rgba(255,255,255,0.06); }
+
+    /* Quick surge */
+    .sidebar-card { /* same as .card but no hover needed */ }
+  </style>
+</head>
+<body>
+  <nav class="nexus-nav">
+    <div class="nav-logo"><span style="font-size:1.4rem;">🏟️</span> NEXUS ARENA OS</div>
+    <div class="nav-links">
+      <a href="/dashboard" class="nav-link">Dashboard</a>
+      <a href="/builder"   class="nav-link" id="nav-builder">Venue Builder</a>
+      <a href="/monitor"   class="nav-link active">Live Monitor</a>
+      <a href="/analytics" class="nav-link">Analytics</a>
+      <a href="/concierge" class="nav-link">AI Directives</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-badge badge-admin" id="nav-role-badge">—</span>
+      <span style="font-size:0.85rem; color:var(--text-secondary);" id="nav-name">—</span>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <main class="page">
+    <!-- Header with view toggle -->
+    <div class="section-header" style="margin-bottom:18px;">
+      <div>
+        <h1 class="section-title" id="view-title">3D Live Heatmap</h1>
+        <div class="section-sub" id="view-sub">Drag to orbit · scroll to zoom · click node to inspect</div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <!-- 3D / 2D toggle -->
+        <div class="toggle-btn-group">
+          <button class="toggle-btn active" id="btn-3d" onclick="switchView('3d')">🌐 3D Orbit</button>
+          <button class="toggle-btn" id="btn-2d" onclick="switchView('2d')">🗺️ 2D Map</button>
+        </div>
+        <div class="heatmap-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#22D3A5;"></div><span>Normal</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FB923C;"></div><span>Busy</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FF4D6D;"></div><span>Critical</span></div>
+        </div>
+        <button class="btn btn-danger" onclick="openSurgeModal()">⚡ Inject Surge</button>
+      </div>
+    </div>
+
+    <div class="monitor-wrap">
+      <!-- Main visual area -->
+      <div>
+        <!-- 3D -->
+        <div class="card" style="padding:0; overflow:hidden;" id="canvas-wrap">
+          <canvas id="monitor-canvas"></canvas>
+        </div>
+        <!-- 2D -->
+        <div id="map-2d-wrap">
+          <svg id="stadium-svg" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+            <!-- Built dynamically in JS -->
+          </svg>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="monitor-sidebar">
+        <!-- Gate Density Ticker -->
+        <div class="card">
+          <div class="card-title">Gate Density Ticker</div>
+          <div id="density-ticker" style="display:flex; flex-direction:column; gap:6px; max-height:270px; overflow-y:auto;"></div>
+        </div>
+
+        <!-- Quick Surge -->
+        <div class="card">
+          <div class="card-title">Quick Surge</div>
+          <div class="form-group">
+            <select id="sq-node" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <input id="sq-mag" class="form-input" type="number" value="800" min="100" max="2000" placeholder="People/min"/>
+          </div>
+          <button class="btn btn-danger" style="width:100%; justify-content:center;" onclick="submitQuickSurge()">
+            🚨 Fire Surge
+          </button>
+        </div>
+
+        <!-- 2D: Node info (only shown in 2D mode) -->
+        <div class="card" id="node-info-card" style="display:none;">
+          <div class="card-title">Selected Zone</div>
+          <div id="node-info-sidebar" style="color:var(--text-muted); font-size:0.84rem;">
+            Click a gate on the map to inspect it.
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Gate Detail Drawer -->
+  <div class="gate-drawer" id="gate-drawer">
+    <div class="drawer-header">
+      <span class="drawer-title" id="drawer-gate-name">Gate —</span>
+      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+
+    <!-- Donut gauge -->
+    <div class="gauge-wrap">
+      <canvas id="drawer-gauge" width="160" height="160"></canvas>
+      <span class="gauge-label" id="drawer-gauge-label">Occupancy</span>
+    </div>
+
+    <!-- Metrics grid -->
+    <div class="drawer-meta-grid" id="drawer-meta-grid">
+      <div class="drawer-meta-cell"><div class="dmc-label">Status</div><div class="dmc-value" id="dm-status">—</div></div>
+      <div class="drawer-meta-cell"><div class="dmc-label">Capacity</div><div class="dmc-value" id="dm-capacity">—</div></div>
+      <div class="drawer-meta-cell"><div class="dmc-label">Occupancy</div><div class="dmc-value" id="dm-occ">—</div></div>
+      <div class="drawer-meta-cell"><div class="dmc-label">Density ρ</div><div class="dmc-value" id="dm-density">—</div></div>
+      <div class="drawer-meta-cell"><div class="dmc-label">Flux J</div><div class="dmc-value" id="dm-flux">—</div></div>
+      <div class="drawer-meta-cell"><div class="dmc-label">Node Type</div><div class="dmc-value" id="dm-type">—</div></div>
+    </div>
+
+    <!-- Flux sparkline -->
+    <div class="sparkline-wrap">
+      <div class="card-title" style="margin-bottom:4px;">Flux History</div>
+      <div class="sparkline-bars" id="sparkline-bars">
+        <!-- bars injected by JS -->
+      </div>
+    </div>
+
+    <!-- Action button -->
+    <button class="btn btn-amber" style="width:100%; justify-content:center;" id="drawer-divert-btn" onclick="suggestAlternate()">
+      🔀 Suggest Alternate Gate
+    </button>
+  </div>
+
+  <!-- Surge Modal -->
+  <div id="surge-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.78); z-index:5000; align-items:center; justify-content:center;">
+    <div class="card" style="width:360px; border-color:rgba(255,77,109,0.3);">
+      <div style="font-family:'Space Grotesk',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:16px;">⚡ Inject Surge</div>
+      <div class="form-group">
+        <label class="form-label">Gate</label>
+        <select id="sm-node" class="form-select"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Magnitude (people/min)</label>
+        <input id="sm-mag" class="form-input" type="number" value="800"/>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-danger" style="flex:1;" onclick="submitSurge()">Inject</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('surge-modal').style.display='none'">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"}}</script>
+
+  <script type="module">
+    import { API, showToast, densityColor, statusClass, fmtTime } from '/static/js/api.js';
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    if (!API.token() || API.role() === 'attendee') window.location.href = '/';
+    document.getElementById('nav-name').textContent = API.name();
+    const role = API.role();
+    document.getElementById('nav-role-badge').textContent = role.charAt(0).toUpperCase() + role.slice(1);
+    document.getElementById('nav-role-badge').className = `nav-badge badge-${role}`;
+    if (role !== 'admin') document.getElementById('nav-builder').style.display = 'none';
+    window.API = API;
+
+    const sid = API.stadiumId();
+    let nodeObjects = {};    // node_id → THREE.Mesh (3D)
+    let nodeData    = {};    // node_id → { label, capacity, type }
+    let metricsCache = {};
+    let liveThresholds = { busy_threshold: 0.55, critical_threshold: 0.75 };
+    let particleSystems = [];
+    let fluxHistory = {};   // node_id → last 10 flux values
+    let selectedNodeId = null;
+    let currentView = '3d';
+
+    // SVG gate elements (2D mode)
+    let svgGates = {};  // node_id → SVG group element
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3-D SCENE SETUP
+    // ─────────────────────────────────────────────────────────────────────────
+    const canvas = document.getElementById('monitor-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    renderer.setClearColor(0x0A0A10, 1);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(58, canvas.clientWidth / canvas.clientHeight, 0.1, 5000);
+    camera.position.set(0, -200, 600);
+    camera.lookAt(0, 0, 0);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.07;
+    controls.minDistance = 100;
+    controls.maxDistance = 1400;
+
+    scene.add(new THREE.AmbientLight(0x2A2040, 2.5));
+    const dirLight = new THREE.DirectionalLight(0x8875FF, 1.2);
+    dirLight.position.set(100, 200, 200);
+    scene.add(dirLight);
+
+    const grid = new THREE.GridHelper(1200, 24, 0x14142A, 0x14142A);
+    grid.rotation.x = Math.PI / 2;
+    scene.add(grid);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // VIEW TOGGLE
+    // ─────────────────────────────────────────────────────────────────────────
+    window.switchView = (mode) => {
+      currentView = mode;
+      const is3d = mode === '3d';
+      document.getElementById('btn-3d').classList.toggle('active', is3d);
+      document.getElementById('btn-2d').classList.toggle('active', !is3d);
+      document.getElementById('canvas-wrap').style.display = is3d ? '' : 'none';
+      document.getElementById('map-2d-wrap').style.display  = is3d ? 'none' : 'block';
+      document.getElementById('node-info-card').style.display = is3d ? 'none' : '';
+      document.getElementById('view-title').textContent = is3d ? '3D Live Heatmap' : '2D Stadium Floor Plan';
+      document.getElementById('view-sub').textContent = is3d
+        ? 'Drag to orbit · scroll to zoom · click node to inspect'
+        : 'Click a gate zone to inspect density, flux & analytics';
+      if (!is3d) renderSvgMap();
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LOAD GRAPH
+    // ─────────────────────────────────────────────────────────────────────────
+    async function loadGraph() {
+      const data  = await API.getLayout(sid);
+      const nodes = data.nodes || [];
+      const edges = data.edges || [];
+
+      // 3D meshes
+      nodes.forEach(n => {
+        nodeData[n.id] = n;
+        fluxHistory[n.id] = [];
+
+        const r = Math.max(12, Math.sqrt(n.capacity / 50));
+        const geo = new THREE.SphereGeometry(r, 24, 24);
+        const mat = new THREE.MeshPhongMaterial({
+          color: 0x22D3A5, emissive: 0x22D3A5, emissiveIntensity: 0.3, transparent: true, opacity: 0.92,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(n.coord_x, n.coord_y, n.coord_z);
+        mesh.userData = { id: n.id, label: n.label, capacity: n.capacity, type: n.type };
+
+        const tex = makeTextTexture(n.label);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+        sprite.scale.set(80, 20, 1);
+        sprite.position.set(0, r + 18, 0);
+        mesh.add(sprite);
+
+        scene.add(mesh);
+        nodeObjects[n.id] = mesh;
+      });
+
+      // 3D edges
+      const edgeMap = {};
+      nodes.forEach(n => { edgeMap[n.id] = n; });
+      edges.forEach(e => {
+        const from = edgeMap[e.from_id], to = edgeMap[e.to_id];
+        if (!from || !to) return;
+        const pts = [
+          new THREE.Vector3(from.coord_x, from.coord_y, from.coord_z),
+          new THREE.Vector3(to.coord_x,   to.coord_y,   to.coord_z),
+        ];
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const tGeo  = new THREE.TubeGeometry(curve, 8, 1.4, 6, false);
+        const tMat  = new THREE.MeshPhongMaterial({ color: 0x1A1A30, opacity: 0.45, transparent: true });
+        scene.add(new THREE.Mesh(tGeo, tMat));
+        addEdgeParticles(from, to);
+      });
+
+      // Populate surge selects
+      const gateNodes = nodes.filter(n => n.type === 'gate');
+      ['sm-node','sq-node'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (sel) sel.innerHTML = gateNodes.map(n => `<option value="${n.id}">${n.label}</option>`).join('');
+      });
+    }
+
+    function makeTextTexture(text) {
+      const c2 = document.createElement('canvas');
+      c2.width = 256; c2.height = 64;
+      const ctx = c2.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.fillRect(0, 0, 256, 64);
+      ctx.font = 'bold 21px Space Grotesk, sans-serif';
+      ctx.fillStyle = '#D0D0E0';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 128, 32);
+      return new THREE.CanvasTexture(c2);
+    }
+
+    function addEdgeParticles(from, to) {
+      const count = 18;
+      const positions = new Float32Array(count * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const mat = new THREE.PointsMaterial({ color: 0x8875FF, size: 2.5, transparent: true, opacity: 0.55 });
+      const pts = new THREE.Points(geo, mat);
+      scene.add(pts);
+      particleSystems.push({ pts, from, to, offsets: Array.from({ length: count }, () => Math.random()) });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2D SVG MAP
+    // ─────────────────────────────────────────────────────────────────────────
+    // Gate compass positions mapped to SVG coords (800x600 viewbox, centre 400,300)
+    const GATE_POSITIONS = {
+      GN:  { x: 400, y:  60, label: 'N'  },
+      GS:  { x: 400, y: 540, label: 'S'  },
+      GE:  { x: 720, y: 300, label: 'E'  },
+      GW:  { x:  80, y: 300, label: 'W'  },
+      GNE: { x: 600, y: 120, label: 'NE' },
+      GNW: { x: 200, y: 120, label: 'NW' },
+      GSE: { x: 600, y: 480, label: 'SE' },
+      GSW: { x: 200, y: 480, label: 'SW' },
+    };
+    const LOBBY_POSITIONS = {
+      LN:  { x: 400, y: 140 },
+      LS:  { x: 400, y: 460 },
+      LE:  { x: 620, y: 300 },
+      LW:  { x: 180, y: 300 },
+    };
+
+    function renderSvgMap() {
+      const svg = document.getElementById('stadium-svg');
+      svg.innerHTML = `
+        <defs>
+          <radialGradient id="fieldGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#1A1A2E" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#0A0A14" stop-opacity="0.9"/>
+          </radialGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        <!-- Stadium oval -->
+        <ellipse cx="400" cy="300" rx="340" ry="260"
+          fill="none" stroke="rgba(136,117,255,0.18)" stroke-width="2"/>
+        <!-- Field -->
+        <ellipse cx="400" cy="300" rx="220" ry="165"
+          fill="url(#fieldGrad)" stroke="rgba(34,211,165,0.12)" stroke-width="1.5"/>
+        <!-- Pitch markings -->
+        <ellipse cx="400" cy="300" rx="140" ry="105" fill="none" stroke="rgba(34,211,165,0.08)" stroke-width="1"/>
+        <line x1="400" y1="135" x2="400" y2="465" stroke="rgba(34,211,165,0.07)" stroke-width="1"/>
+        <!-- Centre circle -->
+        <circle cx="400" cy="300" r="30" fill="none" stroke="rgba(34,211,165,0.1)" stroke-width="1"/>
+        <circle cx="400" cy="300" r="4" fill="rgba(34,211,165,0.3)"/>
+
+        <!-- Edges (connector lines drawn per node pair) -->
+        <g id="svg-edges" stroke="rgba(136,117,255,0.2)" stroke-width="1.5" stroke-dasharray="5,4">
+        </g>
+
+        <!-- Gate nodes -->
+        <g id="svg-gates"></g>
+
+        <!-- Lobby nodes -->
+        <g id="svg-lobbies"></g>
+      `;
+
+      // Draw edges (gate↔lobby lines)
+      const edgeG = svg.getElementById('svg-edges');
+      const allPositions = { ...GATE_POSITIONS, ...LOBBY_POSITIONS };
+      const drawnEdges = new Set();
+      Object.values(nodeData).forEach(n => {
+        // Simple connecting lines between adjacent nodes
+      });
+      // Wire gates to nearby lobbies
+      const gateToLobby = { GN:['LN'], GS:['LS'], GE:['LE'], GW:['LW'],
+                             GNE:['LN','LE'], GNW:['LN','LW'], GSE:['LS','LE'], GSW:['LS','LW'] };
+      Object.entries(gateToLobby).forEach(([g, ls]) => {
+        const gp = GATE_POSITIONS[g];
+        if (!gp) return;
+        ls.forEach(l => {
+          const lp = LOBBY_POSITIONS[l];
+          if (!lp) return;
+          const key = [g,l].sort().join('-');
+          if (drawnEdges.has(key)) return;
+          drawnEdges.add(key);
+          const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1', gp.x); line.setAttribute('y1', gp.y);
+          line.setAttribute('x2', lp.x); line.setAttribute('y2', lp.y);
+          edgeG.appendChild(line);
+        });
+      });
+
+      // Draw lobby nodes
+      const lobbyG = svg.getElementById('svg-lobbies');
+      Object.entries(LOBBY_POSITIONS).forEach(([id, pos]) => {
+        const g  = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const hex = buildHexPath(pos.x, pos.y, 18);
+        const path = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+        path.setAttribute('points', hex);
+        path.setAttribute('fill', 'rgba(136,117,255,0.12)');
+        path.setAttribute('stroke', 'rgba(136,117,255,0.3)');
+        path.setAttribute('stroke-width', '1.5');
+        g.appendChild(path);
+        lobbyG.appendChild(g);
+      });
+
+      // Draw gate nodes
+      const gateG = svg.getElementById('svg-gates');
+      svgGates = {};
+      Object.entries(GATE_POSITIONS).forEach(([id, pos]) => {
+        const nd = Object.values(nodeData).find(n => n.id === id);
+        if (!nd) return;
+        const m  = metricsCache[id] || {};
+        const color = densityColor(m.density || 0, liveThresholds);
+
+        const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+        g.classList.add('svg-gate');
+        g.setAttribute('data-id', id);
+        g.setAttribute('filter', 'url(#glow)');
+
+        // Outer ring (capacity indicator)
+        const outerR = 26 + Math.log(nd.capacity / 200 + 1) * 5;
+        const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        ring.setAttribute('cx', pos.x); ring.setAttribute('cy', pos.y); ring.setAttribute('r', outerR);
+        ring.setAttribute('fill', 'none');
+        ring.setAttribute('stroke', color);
+        ring.setAttribute('stroke-width', '1.5');
+        ring.setAttribute('opacity', '0.35');
+        g.appendChild(ring);
+
+        // Main dot
+        const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        circ.setAttribute('cx', pos.x); circ.setAttribute('cy', pos.y); circ.setAttribute('r', '20');
+        circ.setAttribute('fill', color);
+        circ.setAttribute('fill-opacity', '0.85');
+        circ.setAttribute('stroke', '#fff');
+        circ.setAttribute('stroke-width', '1.5');
+        circ.setAttribute('stroke-opacity', '0.25');
+        g.appendChild(circ);
+
+        // Label
+        const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        txt.setAttribute('x', pos.x); txt.setAttribute('y', pos.y - 3);
+        txt.setAttribute('text-anchor', 'middle');
+        txt.setAttribute('dominant-baseline', 'middle');
+        txt.setAttribute('fill', '#fff');
+        txt.setAttribute('font-size', '9');
+        txt.setAttribute('font-weight', 'bold');
+        txt.setAttribute('font-family', 'Space Grotesk, sans-serif');
+        txt.textContent = pos.label;
+        g.appendChild(txt);
+
+        // Density % label below
+        const pct = document.createElementNS('http://www.w3.org/2000/svg','text');
+        pct.setAttribute('x', pos.x); pct.setAttribute('y', pos.y + 34);
+        pct.setAttribute('text-anchor', 'middle');
+        pct.setAttribute('fill', color);
+        pct.setAttribute('font-size', '10');
+        pct.setAttribute('font-family', 'JetBrains Mono, monospace');
+        pct.setAttribute('font-weight', '600');
+        pct.textContent = Math.round((m.density || 0) * 100) + '%';
+        pct.id = `svg-pct-${id}`;
+        g.appendChild(pct);
+
+        // Gate name label
+        const nameL = document.createElementNS('http://www.w3.org/2000/svg','text');
+        nameL.setAttribute('x', pos.x); nameL.setAttribute('y', pos.y + 47);
+        nameL.setAttribute('text-anchor', 'middle');
+        nameL.setAttribute('fill', 'rgba(240,240,245,0.55)');
+        nameL.setAttribute('font-size', '9');
+        nameL.setAttribute('font-family', 'Inter, sans-serif');
+        nameL.textContent = nd.label;
+        g.appendChild(nameL);
+
+        g.addEventListener('click', () => openDrawer(id));
+
+        gateG.appendChild(g);
+        svgGates[id] = { g, circ, ring, pct };
+      });
+    }
+
+    function buildHexPath(cx, cy, r) {
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 180) * (60 * i - 30);
+        pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`);
+      }
+      return pts.join(' ');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HEATMAP UPDATE (both views)
+    // ─────────────────────────────────────────────────────────────────────────
+    function updateHeatmap(metrics) {
+      metricsCache = metrics;
+      updateDensityTicker(metrics);
+
+      // Track flux history
+      Object.entries(metrics).forEach(([nid, m]) => {
+        if (!fluxHistory[nid]) fluxHistory[nid] = [];
+        fluxHistory[nid].push(m.flux || 0);
+        if (fluxHistory[nid].length > 10) fluxHistory[nid].shift();
+      });
+
+      // 3D update
+      Object.entries(metrics).forEach(([nid, m]) => {
+        const mesh = nodeObjects[nid];
+        if (!mesh) return;
+        const col = new THREE.Color(densityColor(m.density || 0, liveThresholds));
+        mesh.material.color.set(col);
+        mesh.material.emissive.set(col);
+        mesh.material.emissiveIntensity = m.density > 0.7 ? 0.65 : 0.3;
+        if (m.status === 'CHOKE' || m.status === 'CRITICAL') {
+          const s = 1.0 + 0.05 * Math.sin(Date.now() / 300);
+          mesh.scale.set(s, s, s);
+        } else {
+          mesh.scale.set(1, 1, 1);
+        }
+      });
+
+      // 2D update
+      if (currentView === '2d') {
+        Object.entries(metrics).forEach(([nid, m]) => {
+          const sg = svgGates[nid];
+          if (!sg) return;
+          const color = densityColor(m.density || 0, liveThresholds);
+          sg.circ.setAttribute('fill', color);
+          sg.ring.setAttribute('stroke', color);
+          if (sg.pct) sg.pct.textContent = Math.round((m.density || 0) * 100) + '%';
+          if (sg.pct) sg.pct.setAttribute('fill', color);
+        });
+      }
+
+      // Refresh drawer if open
+      if (selectedNodeId && document.getElementById('gate-drawer').classList.contains('open')) {
+        openDrawer(selectedNodeId);
+      }
+    }
+
+    function updateDensityTicker(metrics) {
+      const ticker = document.getElementById('density-ticker');
+      const gateMetrics = Object.entries(metrics)
+        .filter(([id]) => nodeData[id]?.type === 'gate')
+        .sort((a, b) => (b[1].density || 0) - (a[1].density || 0));
+
+      ticker.innerHTML = gateMetrics.map(([id, m]) => {
+        const pct = Math.round((m.density || 0) * 100);
+        const col = densityColor(m.density || 0, liveThresholds);
+        return `
+          <div class="density-ticker-item" style="cursor:pointer;" onclick="openDrawer('${id}')">
+            <div style="width:9px;height:9px;border-radius:50%;background:${col};flex-shrink:0;box-shadow:0 0 5px ${col};"></div>
+            <span style="font-size:0.78rem; color:var(--text-secondary); flex:1;">${nodeData[id]?.label || id}</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:0.76rem; color:${col}; font-weight:600;">${pct}%</span>
+          </div>`;
+      }).join('');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GATE DETAIL DRAWER
+    // ─────────────────────────────────────────────────────────────────────────
+    window.openDrawer = (nodeId) => {
+      selectedNodeId = nodeId;
+      const nd = nodeData[nodeId];
+      const m  = metricsCache[nodeId] || {};
+      if (!nd) return;
+
+      document.getElementById('gate-drawer').classList.add('open');
+      document.getElementById('drawer-gate-name').textContent = nd.label;
+
+      const density = m.density || 0;
+      const color   = densityColor(density, liveThresholds);
+
+      // Donut gauge
+      drawGauge(density, color, nd.capacity, m.current_occupancy || 0);
+
+      // Meta grid
+      document.getElementById('dm-status').innerHTML =
+        `<span class="status-badge ${statusClass(m.status || 'EMPTY')}">${m.status || '—'}</span>`;
+      document.getElementById('dm-capacity').textContent = nd.capacity;
+      document.getElementById('dm-occ').textContent      = m.current_occupancy || 0;
+      document.getElementById('dm-density').textContent  = Math.round(density * 100) + '%';
+      document.getElementById('dm-density').style.color  = color;
+      document.getElementById('dm-flux').textContent     = (m.flux || 0).toFixed(4);
+      document.getElementById('dm-type').textContent     = nd.type;
+
+      // Sparkline
+      drawSparkline(fluxHistory[nodeId] || []);
+
+      // 2D highlight
+      if (currentView === '2d') {
+        Object.values(svgGates).forEach(sg => sg.g.classList.remove('selected'));
+        if (svgGates[nodeId]) svgGates[nodeId].g.classList.add('selected');
+      }
+
+      // Sidebar info (2D mode)
+      document.getElementById('node-info-sidebar').innerHTML = `
+        <div style="font-weight:600; color:var(--text-primary); margin-bottom:8px;">${nd.label}</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.78rem;">
+          <span style="color:var(--text-muted);">Density</span>
+          <span style="color:${color}; font-weight:600;">${Math.round(density*100)}%</span>
+          <span style="color:var(--text-muted);">Capacity</span>
+          <span>${nd.capacity}</span>
+          <span style="color:var(--text-muted);">Status</span>
+          <span class="status-badge ${statusClass(m.status||'EMPTY')}" style="font-size:0.68rem;">${m.status||'—'}</span>
+        </div>`;
+    };
+
+    function drawGauge(density, color, capacity, occupancy) {
+      const canvas = document.getElementById('drawer-gauge');
+      const ctx    = canvas.getContext('2d');
+      const cx = 80, cy = 80, r = 62, arc = Math.PI * 2;
+      ctx.clearRect(0, 0, 160, 160);
+
+      // Background ring
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, arc);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.lineWidth = 14;
+      ctx.stroke();
+
+      // Filled arc
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + arc * density);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 14;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Centre text
+      ctx.fillStyle = '#F0F0F5';
+      ctx.font = 'bold 22px Space Grotesk, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(Math.round(density * 100) + '%', cx, cy - 8);
+
+      ctx.fillStyle = 'rgba(144,144,168,0.8)';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.fillText(`${occupancy} / ${capacity}`, cx, cy + 14);
+
+      document.getElementById('drawer-gauge-label').textContent = 'Live Occupancy';
+    }
+
+    function drawSparkline(history) {
+      const bars = document.getElementById('sparkline-bars');
+      if (!history.length) { bars.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem;">No data yet</span>'; return; }
+      const max = Math.max(...history, 0.001);
+      bars.innerHTML = history.map((v, i) => {
+        const h = Math.max(4, (v / max) * 52);
+        const isLast = i === history.length - 1;
+        return `<div class="spark-bar" style="height:${h}px; background:${isLast ? 'var(--accent)' : 'rgba(136,117,255,0.35)'};"></div>`;
+      }).join('');
+    }
+
+    window.closeDrawer = () => {
+      document.getElementById('gate-drawer').classList.remove('open');
+      selectedNodeId = null;
+      Object.values(svgGates).forEach(sg => sg.g.classList.remove('selected'));
+    };
+
+    window.suggestAlternate = async () => {
+      if (!selectedNodeId) return;
+      try {
+        await API.postSurge(sid, selectedNodeId, 1);  // tiny surge to trigger AI
+        showToast('AI Brain', 'Generating alternative gate suggestion…', 'info');
+      } catch(e) {
+        showToast('Error', 'Could not request alternative', 'danger');
+      }
+    };
+
+    // 3D click raycasting
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    canvas.addEventListener('click', (e) => {
+      if (currentView !== '3d') return;
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(Object.values(nodeObjects));
+      if (hits.length > 0) {
+        openDrawer(hits[0].object.userData.id);
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RESIZE
+    // ─────────────────────────────────────────────────────────────────────────
+    new ResizeObserver(() => {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }).observe(canvas);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3D ANIMATE LOOP
+    // ─────────────────────────────────────────────────────────────────────────
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      const t = Date.now() / 2000;
+      particleSystems.forEach(({ pts, from, to, offsets }) => {
+        const pos = pts.geometry.attributes.position;
+        offsets.forEach((off, i) => {
+          const frac = (t * 0.38 + off) % 1;
+          pos.setXYZ(i,
+            from.coord_x + (to.coord_x - from.coord_x) * frac,
+            from.coord_y + (to.coord_y - from.coord_y) * frac,
+            from.coord_z + (to.coord_z - from.coord_z) * frac,
+          );
+        });
+        pos.needsUpdate = true;
+      });
+      renderer.render(scene, camera);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SURGE CONTROLS
+    // ─────────────────────────────────────────────────────────────────────────
+    window.openSurgeModal = () => { document.getElementById('surge-modal').style.display = 'flex'; };
+    window.submitSurge = async () => {
+      const node = document.getElementById('sm-node').value;
+      const mag  = parseInt(document.getElementById('sm-mag').value);
+      await API.postSurge(sid, node, mag);
+      showToast('Surge Injected', `+${mag} ppl/min at ${node}`, 'warn');
+      document.getElementById('surge-modal').style.display = 'none';
+    };
+    window.submitQuickSurge = async () => {
+      const node = document.getElementById('sq-node').value;
+      const mag  = parseInt(document.getElementById('sq-mag').value);
+      await API.postSurge(sid, node, mag);
+      showToast('Surge Injected', `+${mag} ppl/min at ${node}`, 'warn');
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // WEBSOCKET
+    // ─────────────────────────────────────────────────────────────────────────
+    API.connectWS();
+    API.onWS((msg) => {
+      if (msg.type === 'heatmap_update' && msg.stadium_id === sid) {
+        if (msg.thresholds) liveThresholds = msg.thresholds;
+        updateHeatmap(msg.metrics);
+      }
+      if (msg.type === 'ai_directive') {
+        showToast('AI Directive', (msg.message || '').substring(0, 80) + '…', 'danger', 7000);
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOT
+    // ─────────────────────────────────────────────────────────────────────────
+    await loadGraph();
+
+    // Load initial thresholds
+    try {
+      const t = await API.getThresholds(sid);
+      if (t) liveThresholds = t;
+    } catch(e) {}
+
+    const initMetrics = await API.getMetrics(sid);
+    if (initMetrics?.metrics) updateHeatmap(initMetrics.metrics);
+
+    animate();
+
+    // Make openDrawer accessible from ticker clicks
+    window.openDrawer = window.openDrawer;
+  </script>
+</body>
+</html>

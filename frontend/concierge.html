@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nexus Arena OS — AI Directives & Concierge</title>
+  <meta name="description" content="AI-generated employee directives and attendee nudges from the Nexus Arena crowd management system."/>
+  <link rel="stylesheet" href="/static/css/nexus.css"/>
+  <style>
+    .concierge-layout { display:grid; grid-template-columns:1fr 1fr 300px; gap:20px; }
+    @media(max-width:1200px){ .concierge-layout { grid-template-columns:1fr 1fr; } }
+    @media(max-width:800px) { .concierge-layout { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <nav class="nexus-nav">
+    <div class="nav-logo"><span style="font-size:1.4rem;">🏟️</span> NEXUS ARENA OS</div>
+    <div class="nav-links">
+      <a href="/dashboard"  class="nav-link">Dashboard</a>
+      <a href="/builder"    class="nav-link" id="nav-builder">Venue Builder</a>
+      <a href="/monitor"    class="nav-link">Live Monitor</a>
+      <a href="/analytics"  class="nav-link">Analytics</a>
+      <a href="/concierge"  class="nav-link active">AI Directives</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-badge badge-admin" id="nav-role-badge">—</span>
+      <span style="font-size:0.85rem; color:var(--text-secondary);" id="nav-name">—</span>
+      <button class="btn-logout" onclick="API.logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <main class="page">
+    <div class="section-header" style="margin-bottom:24px;">
+      <div>
+        <h1 class="section-title">AI Directives & Concierge</h1>
+        <div class="section-sub">Real-time crowd management decisions from the AI Brain + UX Concierge agents</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-ghost" onclick="loadAll()">↻ Refresh</button>
+        <button class="btn btn-danger" onclick="openSurgeModal()">⚡ Test Surge</button>
+      </div>
+    </div>
+
+    <div class="concierge-layout">
+      <!-- Employee Directives -->
+      <div>
+        <div class="card-title" style="margin-bottom:12px;">👷 Staff Directives <span id="dir-count" style="color:var(--text-muted);">—</span></div>
+        <div id="directives-feed" style="display:flex; flex-direction:column; gap:10px; max-height:70vh; overflow-y:auto;"></div>
+      </div>
+
+      <!-- Staff Terminal Log -->
+      <div>
+        <div class="card-title" style="margin-bottom:12px;">🖥️ Agent Terminal Log</div>
+        <div class="log-feed" id="log-feed" style="height:70vh;"></div>
+      </div>
+
+      <!-- Attendee Phone Mockup -->
+      <div style="display:flex; flex-direction:column; align-items:center; gap:14px;">
+        <div class="card-title" style="margin-bottom:0;">📱 Attendee View</div>
+        <div class="phone-frame">
+          <div class="phone-notch"></div>
+          <div class="phone-screen">
+            <div class="phone-app-header">
+              <div class="phone-app-title">🏟️ NEXUS ARENA</div>
+              <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">Live Gate Assistant</div>
+            </div>
+
+            <div id="phone-content">
+              <div style="padding:12px; text-align:center; color:var(--text-muted); font-size:0.75rem;">
+                Waiting for attendee nudges…<br/>Simulate a surge to trigger one.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-muted); text-align:center;">
+          Simulated attendee device.<br/>Updates automatically on surge.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Surge Modal -->
+  <div id="surge-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:5000; align-items:center; justify-content:center;">
+    <div class="card" style="width:360px; border-color:rgba(239,68,68,0.4);">
+      <div style="font-family:'Space Grotesk',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:16px;">⚡ Test Surge</div>
+      <div class="form-group">
+        <label class="form-label">Gate</label>
+        <select id="sm-node" class="form-select">
+          <option value="GN">Gate North</option><option value="GS">Gate South</option>
+          <option value="GE">Gate East</option><option value="GW">Gate West</option>
+          <option value="GNE">Gate North-East</option><option value="GNW">Gate North-West</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Magnitude (people/min)</label>
+        <input id="sm-mag" class="form-input" type="number" value="900"/>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-danger" style="flex:1;" onclick="submitSurge()">Inject</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('surge-modal').style.display='none'">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script type="module">
+    import { API, showToast, fmtTime, statusClass } from '/static/js/api.js';
+
+    if (!API.token() || API.role() === 'attendee') window.location.href = '/';
+    document.getElementById('nav-name').textContent = API.name();
+    const role = API.role();
+    document.getElementById('nav-role-badge').textContent = role.charAt(0).toUpperCase() + role.slice(1);
+    document.getElementById('nav-role-badge').className = `nav-badge badge-${role}`;
+    if (role !== 'admin') document.getElementById('nav-builder').style.display = 'none';
+    window.API = API;
+
+    const sid = API.stadiumId();
+    let latestNudge = null;
+
+    window.loadAll = async function() {
+      const data = await API.getDirectives(sid, 40);
+      const feed = document.getElementById('directives-feed');
+      feed.innerHTML = '';
+      const directives = data.directives || [];
+      document.getElementById('dir-count').textContent = `(${directives.length})`;
+
+      directives.forEach(d => {
+        feed.insertAdjacentHTML('beforeend', `
+          <div class="directive-card severity-${d.severity}">
+            <div class="directive-header">
+              <span class="status-badge ${d.severity==='CHOKE'?'status-choke':'status-red'}">${d.severity}</span>
+              <span style="font-size:0.72rem; color:var(--text-muted);">Node: ${d.node_id}</span>
+              <span class="directive-time">${fmtTime(d.timestamp)}</span>
+            </div>
+            <div class="directive-msg">${d.message}</div>
+            ${d.alt_gate ? `<div class="directive-meta">🔀 Divert to: <strong>${d.alt_gate}</strong></div>` : ''}
+            ${d.wait_time ? `<div class="directive-meta">⏱ Est. wait: <strong>${d.wait_time.toFixed(1)} min</strong></div>` : ''}
+          </div>`);
+      });
+
+      if (directives.length === 0) {
+        feed.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:30px;font-size:0.85rem;">No directives yet. Inject a surge to trigger the AI Brain.</div>';
+      }
+    };
+
+    function addLog(msg) {
+      const feed = document.getElementById('log-feed');
+      const agentClass = { 'SPATIAL':'log-agent-spatial','PHYSICIST':'log-agent-physicist','AI':'log-agent-ai','CONCIERGE':'log-agent-concierge' }[msg.agent] || 'log-msg';
+      const sevClass = ['CHOKE','CRITICAL'].includes(msg.severity) ? 'log-critical' : msg.severity==='WARN' ? 'log-warn' : 'log-msg';
+      feed.insertAdjacentHTML('beforeend', `
+        <div class="log-entry">
+          <span class="log-ts">${new Date().toLocaleTimeString()}</span>
+          <span class="${agentClass}">[${msg.agent||'SYS'}]</span>
+          <span class="${sevClass}">${msg.message}</span>
+        </div>`);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    function updatePhoneWithNudge(msg) {
+      latestNudge = msg;
+      const phone = document.getElementById('phone-content');
+      const altInfo = msg.alt_gate_label
+        ? `<div style="margin-top:12px; padding:10px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:8px; font-size:0.78rem; color:var(--green);">
+            ✅ Closest open gate: <strong>${msg.alt_gate_label}</strong>
+           </div>`
+        : msg.wait_time
+          ? `<div style="margin-top:12px; padding:8px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:8px; font-size:0.78rem; color:var(--amber);">
+              ⏱ Estimated wait: <strong>${msg.wait_time.toFixed(0)} min</strong>
+             </div>`
+          : '';
+
+      phone.innerHTML = `
+        <div style="padding:10px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.35); border-radius:10px; margin-bottom:10px;">
+          <div style="font-size:1.2rem; margin-bottom:6px;">🚨</div>
+          <div style="font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:0.88rem; color:var(--red); margin-bottom:6px;">Gate Alert</div>
+          <div style="font-size:0.75rem; color:var(--text-secondary); line-height:1.5;">${msg.message}</div>
+          ${altInfo}
+        </div>
+        <div style="padding:8px 10px; background:rgba(0,212,255,0.05); border:1px solid var(--border); border-radius:8px; font-size:0.72rem; color:var(--text-muted);">
+          ${new Date().toLocaleTimeString()} · Gate ${msg.node_id}
+        </div>`;
+    }
+
+    // ── WebSocket ──────────────────────────────────────────────────────────
+    API.connectWS();
+    API.onWS((msg) => {
+      if (msg.type === 'agent_event') {
+        addLog(msg);
+      }
+      if (msg.type === 'ai_directive' && msg.target === 'employee') {
+        addLog({ agent: 'AI', message: msg.message, severity: msg.severity });
+        loadAll();
+        showToast('🚨 AI Directive', msg.message.substring(0, 80), 'danger', 8000);
+      }
+      if (msg.type === 'attendee_nudge') {
+        updatePhoneWithNudge(msg);
+        addLog({ agent: 'CONCIERGE', message: `Nudge sent → ${msg.ticket_code}: ${msg.message.substring(0,60)}…`, severity: 'INFO' });
+      }
+    });
+
+    window.openSurgeModal = () => document.getElementById('surge-modal').style.display = 'flex';
+    window.submitSurge = async () => {
+      const node = document.getElementById('sm-node').value;
+      const mag  = parseInt(document.getElementById('sm-mag').value);
+      await API.postSurge(sid, node, mag);
+      showToast('Surge Injected', `+${mag} ppl/min at ${node}`, 'warn');
+      document.getElementById('surge-modal').style.display = 'none';
+    };
+
+    loadAll();
+    setInterval(loadAll, 15000);
+  </script>
+</body>
+</html>
