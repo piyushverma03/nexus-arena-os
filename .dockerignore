@@ -1,0 +1,18 @@
+# Ignored extensions
+.git
+.gitignore
+*.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Local DB (Don't copy local file, generate it fresh in docker)
+nexus.db
