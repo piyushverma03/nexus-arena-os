@@ -92,7 +92,8 @@ async def iot_loop():
     t_last = time.time()
     
     # Internal scenario scale clock for the environment agent
-    scenario_clock = 0.0
+    # Start at 40.0 so the sine wave already has pressure, instantly showing crowd activity
+    scenario_clock = 40.0
     
     while True:
         await asyncio.sleep(2)
@@ -127,55 +128,58 @@ async def iot_loop():
             # Track deltas per node to ensure perfect mass conservation (no magically appearing people inside)
             deltas = {nid: 0 for nid in nodes.keys()}
             
-            # 2. EXTERNAL BOUNDARY CONDITIONS
-            if is_ingress:
-                # People arrive at the gates from outside the stadium
-                global_arrivals = int(env_pressure * random.uniform(80, 200) * (dt/2.0))
-                for _ in range(global_arrivals):
-                    deltas[random.choice(gate_nodes)] += 1
-            else:
-                # People depart the stadium through the gates
-                global_pull = int(abs(env_pressure) * random.uniform(100, 250) * (dt/2.0))
-                for _ in range(global_pull):
-                    g = random.choice(gate_nodes)
-                    if (nodes[g] + deltas[g]) > 0:
-                        deltas[g] -= 1
-
-            # 3. INTERNAL PIPELINE KINEMATICS (Fluid Transfer)
-            # Max node transfer rate per 2-second nominal window
+            # 2 & 3. INTERNAL PIPELINE AND BOUNDARY FLOW
+            # We calculate transfers purely based on existing static occupancy (`nodes[x]`)
+            # so people don't teleport instantly from the entrance to the floor in one tick.
             transfer_rate = 120 * (dt/2.0) 
 
             if is_ingress:
-                # Flow: Gates -> Lobbies -> Floor
+                # 1. Gates naturally process their current crowd -> Lobbies
                 for g in gate_nodes:
-                    avail = min(nodes[g] + deltas[g], int(transfer_rate * random.uniform(0.6, 1.2)))
+                    avail = min(nodes[g], int(transfer_rate * random.uniform(0.6, 1.2)))
                     if avail > 0:
                         deltas[g] -= avail
-                        # Dump flow into lobbies
+                        # Dump into lobbies
                         for _ in range(avail):
                             deltas[random.choice(lobby_nodes)] += 1
                             
+                # 2. Lobbies process -> Floor
                 for l in lobby_nodes:
-                    avail = min(nodes[l] + deltas[l], int(transfer_rate * random.uniform(0.8, 1.4)))
+                    avail = min(nodes[l], int(transfer_rate * random.uniform(0.8, 1.4)))
                     if avail > 0:
                         deltas[l] -= avail
                         for _ in range(avail):
                             deltas[random.choice(floor_nodes)] += 1
+
+                # 3. New external people arrive at Gates
+                global_arrivals = int(env_pressure * random.uniform(80, 200) * (dt/2.0))
+                for _ in range(global_arrivals):
+                    deltas[random.choice(gate_nodes)] += 1
+
             else:
                 # Flow: Floor -> Lobbies -> Gates
+                # 1. Floor naturally empties -> Lobbies
                 for f in floor_nodes:
-                    avail = min(nodes[f] + deltas[f], int(transfer_rate * random.uniform(1.2, 2.5)))
+                    avail = min(nodes[f], int(transfer_rate * random.uniform(1.2, 2.5)))
                     if avail > 0:
                         deltas[f] -= avail
                         for _ in range(avail):
                             deltas[random.choice(lobby_nodes)] += 1
                             
+                # 2. Lobbies process -> Gates
                 for l in lobby_nodes:
-                    avail = min(nodes[l] + deltas[l], int(transfer_rate * random.uniform(0.8, 1.5)))
+                    avail = min(nodes[l], int(transfer_rate * random.uniform(0.8, 1.5)))
                     if avail > 0:
                         deltas[l] -= avail
                         for _ in range(avail):
                             deltas[random.choice(gate_nodes)] += 1
+
+                # 3. Gates empty out to the environment
+                global_pull = int(abs(env_pressure) * random.uniform(100, 250) * (dt/2.0))
+                for _ in range(global_pull):
+                    g = random.choice(gate_nodes)
+                    if (nodes[g] + deltas[g]) > 0:
+                        deltas[g] -= 1
 
             # 4. MANUAL OVERRIDES / SURGES 
             for nid, s in _surges.items():
