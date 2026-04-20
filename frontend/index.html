@@ -272,24 +272,24 @@
     </div>
   </div>
 
-  <div class="modal-overlay" id="config-modal">
-    <div class="modal">
-      <div class="modal-header">
-        <h3 style="margin:0;font-size:1.1rem;">Configure Event Schedule</h3>
-        <button class="btn btn-ghost" onclick="closeConfigModal()">✕</button>
+  <div id="config-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:5000; align-items:center; justify-content:center;">
+    <div class="card" style="width:380px; max-width:95vw; border-color:rgba(136,117,255,0.3);">
+      <div style="font-family:'Space Grotesk',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:1.1rem;">⚙️ Configure Event Schedule</span>
+        <button class="btn btn-ghost" style="padding:4px 8px;" onclick="closeConfigModal()">✕</button>
       </div>
       
-      <div style="margin-bottom:15px;">
-         <label style="display:block; margin-bottom:5px; font-size:0.85rem; color:var(--text-muted);">Start Time (Today)</label>
-         <input type="time" class="input" id="cfg-start" value="20:00">
+      <div class="form-group">
+         <label class="form-label">Start Time (Today)</label>
+         <input type="time" class="form-input" id="cfg-start" value="20:00">
       </div>
-      <div style="margin-bottom:15px;">
-         <label style="display:block; margin-bottom:5px; font-size:0.85rem; color:var(--text-muted);">End Time (Today)</label>
-         <input type="time" class="input" id="cfg-end" value="22:00">
+      <div class="form-group">
+         <label class="form-label">End Time (Today)</label>
+         <input type="time" class="form-input" id="cfg-end" value="22:00">
       </div>
-      <div style="margin-bottom:20px;">
-         <label style="display:block; margin-bottom:5px; font-size:0.85rem; color:var(--text-muted);">Allowed Entry Deviation (Minutes)</label>
-         <input type="number" class="input" id="cfg-dev" value="30">
+      <div class="form-group" style="margin-bottom:20px;">
+         <label class="form-label">Allowed Entry Deviation (Minutes)</label>
+         <input type="number" class="form-input" id="cfg-dev" value="30">
       </div>
 
       <button class="btn btn-primary" style="width:100%" onclick="submitConfig()">Save & Activate Schedule</button>
@@ -556,8 +556,8 @@
     }
 
     // ── Modals / Forms ──────────────────────────────────────────────────────
-    window.openConfigModal = () => document.getElementById('config-modal').classList.add('active');
-    window.closeConfigModal = () => document.getElementById('config-modal').classList.remove('active');
+    window.openConfigModal = () => document.getElementById('config-modal').style.display = 'flex';
+    window.closeConfigModal = () => document.getElementById('config-modal').style.display = 'none';
 
     window.submitConfig = async () => {
       try {
