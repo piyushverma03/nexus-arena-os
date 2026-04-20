@@ -67,12 +67,16 @@ def _load_thresholds(stadium_id: str) -> Dict[str, float]:
     return t
 
 
-def calculate_flux(occupancy: int, capacity: int, flow_rate: float) -> float:
-    """J = ρ · v  where ρ = occupancy/capacity, v = flow_rate (normalized)."""
+def calculate_flux(occupancy: int, capacity: int) -> float:
+    """
+    Greenshields Macroscopic Flow Model: J = ρ · v
+    where velocity v decreases as density ρ increases: v = v_f * (1 - ρ).
+    """
     if capacity <= 0:
         return 0.0
     rho = min(occupancy / capacity, 1.0)
-    v = min(flow_rate / max(capacity, 1), 1.0)
+    # As density increases, velocity decreases (minimum 5% crawling speed)
+    v = max(1.0 - rho, 0.05)
     return round(rho * v, 4)
 
 
@@ -118,8 +122,7 @@ async def process_iot_event(event: Dict[str, Any]):
     for node_id, occ in occupancy_map.items():
         cap = caps.get(node_id, 1000)
         rho = min(occ / cap, 1.0) if cap > 0 else 0.0
-        flow_rate = occ * 0.8   # estimate
-        flux = calculate_flux(occ, cap, flow_rate)
+        flux = calculate_flux(occ, cap)
         status = classify_status(rho, thresholds)
 
         metrics[node_id] = {

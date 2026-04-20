@@ -45,7 +45,8 @@ class MockTimeRequest(BaseModel):
     multiplier: float
 from backend.auth import (
     authenticate_employee, authenticate_attendee,
-    create_access_token, require_employee, require_admin, get_current_user
+    create_access_token, require_employee, require_admin, get_current_user,
+    check_brute_force  # Added for security
 )
 from backend.tools.mcp_tools import save_user_layout, fetch_historical_flow
 from backend.tools.mock_iot import init_iot, inject_surge, iot_loop, reset_occupancy, set_schedule, set_time_multiplier
@@ -62,10 +63,23 @@ app = FastAPI(title="Nexus Arena OS", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"], # Tightened
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"], # Explicit methods
     allow_headers=["*"],
 )
+
+# Custom Middleware for Security Headers
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:;"
+    return response
+
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
@@ -193,6 +207,9 @@ async def serve_attendee():
 # ── Auth Endpoints ─────────────────────────────────────────────────────────────
 @app.post("/auth/employee/login", response_model=TokenResponse)
 async def employee_login(req: EmployeeLoginRequest):
+    # Security: Check for brute-force lockout before attempting auth
+    check_brute_force(req.email)
+    
     emp = authenticate_employee(req.email, req.password)
     if not emp:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -201,6 +218,7 @@ async def employee_login(req: EmployeeLoginRequest):
         "name": emp["name"], "stadium_id": emp["stadium_id"],
     })
     return TokenResponse(access_token=token, role=emp["role"], name=emp["name"], stadium_id=emp["stadium_id"])
+
 
 
 @app.post("/auth/attendee/login", response_model=TokenResponse)

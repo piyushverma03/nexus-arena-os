@@ -8,10 +8,23 @@ Outputs:
 """
 from __future__ import annotations
 import asyncio
+import json
+import os
 from typing import Dict, Any, List, Optional
+from dotenv import load_dotenv
 
 from backend.database import get_conn
 from backend.agents.flow_physicist import mm1_wait_time
+
+load_dotenv()
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+except ImportError:
+    gemini_client = None
+
 
 _bus: Dict[str, asyncio.Queue] = {}
 _node_meta: Dict[str, Dict[str, Any]] = {}   # {node_id: {label, capacity, type}}
@@ -162,9 +175,41 @@ async def process_critical_event(event: Dict[str, Any]):
             mu = cap / 60
             wait_min = mm1_wait_time(mu, lam)
 
-        # ── Employee Directive ─────────────────────────────────────────────────
-        emp_msg = _build_employee_directive(node_id, node_label, density, status, best_alt, wait_min)
+        # ── Employee Directive & Attendee Nudge Generator ───────────────────────
+        alt_label = best_alt["label"] if best_alt else "None"
+        wait_val = wait_min if wait_min is not None else 0.0
+        
+        dyn_emp_msg = None
+        dyn_nudge_msg = None
+        
+        if gemini_client:
+            prompt = f"""You are the Nexus Arena AI Crowd Intelligence Assistant. 
+A stadium gate/node '{node_label}' has high congestion (density: {int(density*100)}%, status: {status}).
+Alternative diversion gate: '{alt_label}'.
+Estimated wait time if no alt: {wait_val:.1f} mins.
+
+Provide a JSON response with exactly two string keys:
+"employee_msg": A concise, actionable instruction for venue staff including an emoji.
+"attendee_msg": A polite, friendly nudge for attendees telling them to divert to the alternative or wait. Include an emoji.
+"""
+            try:
+                response = await gemini_client.aio.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.7
+                    ),
+                )
+                data = json.loads(response.text)
+                dyn_emp_msg = data.get("employee_msg")
+                dyn_nudge_msg = data.get("attendee_msg")
+            except Exception as e:
+                print(f"[AI BRAIN] Gemini fallback due to error: {e}")
+
+        emp_msg = dyn_emp_msg or _build_employee_directive(node_id, node_label, density, status, best_alt, wait_min)
         severity = "CHOKE" if status == "CHOKE" else "CRITICAL"
+
 
         alt_gate_id = best_alt["node_id"] if best_alt else None
 
@@ -185,7 +230,8 @@ async def process_critical_event(event: Dict[str, Any]):
 
         # ── Attendee Nudges ────────────────────────────────────────────────────
         pending = _get_pending_tickets_at_gate(sid, node_id)
-        nudge_msg = _build_attendee_nudge(node_id, node_label, best_alt, wait_min)
+        nudge_msg = dyn_nudge_msg or _build_attendee_nudge(node_id, node_label, best_alt, wait_min)
+
 
         for ticket in pending:
             _log_directive(sid, "attendee", ticket["id"], node_id, nudge_msg, severity, alt_gate_id, wait_min)
@@ -205,7 +251,12 @@ async def process_critical_event(event: Dict[str, Any]):
             })
 
         STATUS["directives_issued"] += 1
-        print(f"[AI BRAIN] {severity} at {node_label}: {emp_msg}")
+        # Safe print for Windows terminal encoding issues
+        try:
+            print(f"[AI BRAIN] {severity} at {node_label}: {emp_msg}")
+        except UnicodeEncodeError:
+            print(f"[AI BRAIN] {severity} at {node_label}: {emp_msg.encode('ascii', 'ignore').decode('ascii')}")
+
 
 
 async def run():

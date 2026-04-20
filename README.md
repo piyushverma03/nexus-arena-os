@@ -1,85 +1,53 @@
 # Nexus Arena OS
+## Virtual Hackathon 2026 Submission
 
-Nexus Arena OS is a proactive, multi-agent orchestration system designed to optimize the physical logistics of large-scale sporting venues.
+Nexus Arena OS is a proactive, multi-agent orchestration system designed to optimize the physical logistics of large-scale sporting venues through real-time crowd intelligence.
 
-Instead of relying on reactive crowd management, the system leverages real-time data and predictive modeling to reduce friction, improve flow efficiency, and enhance the overall attendee experience.
-
----
-
-## Project Goals
-
-### Optimize Crowd Flow
-
-Prevent congestion by modeling crowd flux:
-
-J = ρv
-
-The system applies dynamic, weighted pathfinding to redistribute movement and relieve high-density zones in real time.
+### Chosen Vertical: Physical Event Experience
+The system is built as a staff-only OS that predicts bottlenecks and autonomously influences crowd behavior through a mesh of AI agents.
 
 ---
 
-### Minimize Wait Times
+### Core Approach & Logic
 
-Implements M/M/1 queueing theory to balance service loads across concession stands and restrooms, redirecting attendees toward under-utilized resources.
+#### 1. Smart Dynamic Assistant (Google Gemini AI)
+The system integrates **Google Gemini 1.5 Flash** to act as the "Brain" of the operation. Unlike static systems, Nexus Arena OS analyzes live stadium metrics (density, queue length, alternate gate availability) and dynamically synthesizes:
+- **Employee Directives:** Actionable, context-aware instructions for staff to manage surges.
+- **Attendee Nudges:** Polite, behavioral redirects sent to ticket holders to balance venue load.
 
----
-
-### Synchronized Coordination
-
-Aligns venue staff actions with attendee behavior through a unified multi-agent mesh, ensuring consistent operational awareness across the venue.
-
----
-
-### Behavioral Redirection
-
-Influences movement patterns using digital incentives and subtle nudges, transforming raw data into a smoother and more intuitive user journey.
+#### 2. Advanced Flow Physics
+We implement the **Greenshields Macroscopic Flow Model** ($J = \rho v$) to calculate crowd flux accurately. 
+- **Logic:** The system recognizes that as density ($\rho$) increases, velocity ($v$) naturally decreases. This prevents mathematically impossible "infinite throughput" and ensures the simulation mirrors real-world physics.
+- **Queue Theory:** Implements $M/M/1$ queueing calculations to predict wait times at specific chokepoints.
 
 ---
 
-## System Architecture
-
-The system operates through a three-agent micro-mesh built on the Antigravity framework:
-
-* **Spatial Architect**
-  Maintains a digital twin of the stadium as a weighted directed graph based on venue topology.
-
-* **Flow Physicist**
-  Processes real-time data to compute density scalars and detect emerging bottlenecks.
-
-* **UX Concierge**
-  Converts system outputs into actionable insights, including user notifications and staff directives.
+### Security Features
+To ensure safe and responsible implementation, the platform includes:
+- **Brute-Force Protection:** Real-time account lockout after successive failed login attempts.
+- **JWT Hardening:** Securely managed asymmetric secret keys via environment variables.
+- **Security Headers Middleware:** Protection against common web vulnerabilities (XSS, Clickjacking, MIME-sniffing) via `Strict-Transport-Security`, `CSP`, and `X-Frame-Options`.
 
 ---
 
-## Technical Implementation
-
-* **Framework:** Antigravity (Multi-Agent OS) using Model Context Protocol (MCP)
-* **Graph Logic:** Dijkstra’s Algorithm for dynamic rerouting based on real-time congestion weights
-* **Backend:** PostgreSQL (Supabase) for storing venue structure and time-series flow data
-* **Visualization:** React + Three.js 3D density mapping with color-interpolated heatmaps
-
----
-
-## Simulation Prototype
-
-Nexus Arena OS includes a simulation engine to demonstrate system behavior without requiring live IoT infrastructure.
-
-Developers can:
-
-* Trigger artificial crowd surges
-* Simulate gate blockages
-* Observe real-time rerouting and system response
-
-This enables rapid testing of predictive logic and agent coordination in a controlled environment.
+### System Architecture
+The system operates through a three-agent micro-mesh:
+* **Spatial Architect:** Maintains the digital twin (weighted graph) of the venue.
+* **Flow Physicist:** Computes density scalars and detects emerging bottlenecks.
+* **AI Brain (Powered by Google Gemini):** Converts data into actionable intelligence.
 
 ---
 
-## Deployment
-
-Containerized and deployed on Google Cloud Run for scalable, on-demand execution.
+### How to Run Locally
+1. **Prerequisites:** Python 3.10+
+2. **Setup:** 
+   - Add your `GEMINI_API_KEY` to a local `.env` file.
+   - Run `start.bat` to install dependencies and launch the server.
+3. **Access:** Open `http://localhost:8000`
+   - **Admin Login:** `admin@nexus.com` / `NexusAdmin123`
 
 ---
 
-## Built For
-
+### Built For
 PromptWars: Virtual Hackathon 2026
+

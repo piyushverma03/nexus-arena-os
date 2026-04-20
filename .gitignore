@@ -16,6 +16,9 @@ venv/
 env/
 ENV/
 
+# Secrets
+.env
+
 # Database (runtime-generated, not source)
 *.db
 *.sqlite
@@ -34,3 +37,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# SQLite temporary files
+*.db-shm
+*.db-wal
+*.db
